@@ -2,7 +2,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 
-String generateLud06(String lnurl) {
+String generateLud06Url(String lnurl) {
     // Find the position of the @ character
     int atIndex = lnurl.indexOf("@");
     if (atIndex == -1) {
@@ -23,7 +23,7 @@ String getLud06Callback(String lnurl) {
     HTTPClient client;
     String httpPayload;
 
-    String lud06Url = generateLud06(lnurl);
+    String lud06Url = generateLud06Url(lnurl);
 
     client.begin(lud06Url);      // Specify request destination
     int httpCode = client.GET(); // get request

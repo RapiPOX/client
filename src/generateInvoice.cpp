@@ -2,13 +2,15 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 
+String amount = "1000";
+
 String generateInvoice(String callbackLud06) {
     HTTPClient client;
     String httpPayload;
 
     String invoice;
 
-    client.begin(callbackLud06 + "?amount=" + "1000"); // Specify request destination with amount pre-established.
+    client.begin(callbackLud06 + "?amount=" + amount); // Specify request destination with amount pre-established.
     int httpCode = client.GET();                       // get request
 
     if (httpCode) {
