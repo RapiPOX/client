@@ -81,24 +81,6 @@ void setup(void) {
 
     /// Obtain LUD06 ///
     callbackLud06 = getLud06Callback(ENV_LNURL);
-
-    // Task1
-    xTaskCreatePinnedToCore(Task1code, /* Function to implement the task */
-                            "Task1",   /* Name of the task */
-                            10000,     /* Stack size in words */
-                            NULL,      /* Task input parameter */
-                            0,         /* Priority of the task */
-                            NULL,      /* Task handle. */
-                            0);        /* Core where the task should run */
-
-    // Task2
-    xTaskCreatePinnedToCore(Task2code, /* Function to implement the task */
-                            "Task2",   /* Name of the task */
-                            10000,     /* Stack size in words */
-                            NULL,      /* Task input parameter */
-                            0,         /* Priority of the task */
-                            NULL,      /* Task handle. */
-                            0);        /* Core where the task should run */
 }
 
 void loop(void) {
@@ -191,24 +173,4 @@ void confirmationLed() {
     delay(100);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(BUZZER, LOW);
-}
-
-void Task1code(void *pvParameters) {
-    Serial.print("Task1 running on core ");
-    Serial.println(xPortGetCoreID());
-
-    for (;;) {
-        timeClient.update();
-        vTaskDelay(1000);
-    }
-}
-
-void Task2code(void *pvParameters) {
-    Serial.print("Task2 running on core ");
-    Serial.println(xPortGetCoreID());
-
-    for (;;) {
-        nfcModule.SAMConfig();
-        vTaskDelay(1000);
-    }
 }
