@@ -6,6 +6,6 @@
 /// @brief Generate invoice from LUD06
 /// @param callbackLud06 callback url from LUD06
 /// @return Generated invoice
-String generateInvoice(String callbackLud06);
+String generateInvoice(String callbackLud06, String amount);
 
 #endif

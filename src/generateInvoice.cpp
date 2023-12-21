@@ -2,18 +2,15 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 
-String amount = "1000";
-
-String generateInvoice(String callbackLud06) {
+String generateInvoice(String callbackLud06, String amount) {
     HTTPClient client;
     String httpPayload;
 
-    String invoice;
-
     client.begin(callbackLud06 + "?amount=" + amount); // Specify request destination with amount pre-established.
-    int httpCode = client.GET();                       // get request
 
-    if (httpCode) {
+    int httpCode = client.GET(); // get request
+
+    if (httpCode >= 200 && httpCode < 300) {
         httpPayload = client.getString(); // get response
     } else {
         Serial.printf("[HTTP] GET invoice failed (generateInvoice file), error: %s\n",
@@ -23,7 +20,7 @@ String generateInvoice(String callbackLud06) {
     client.end();
 
     DynamicJsonDocument doc(1024);
-    if (httpCode == 200) { // Check if the request was successful
+    if (httpCode >= 200 && httpCode < 300) { // Check if the request was successful
         deserializeJson(doc, httpPayload);
     }
 

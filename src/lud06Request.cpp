@@ -28,7 +28,7 @@ String getLud06Callback(String lnurl) {
     client.begin(lud06Url);      // Specify request destination
     int httpCode = client.GET(); // get request
 
-    if (httpCode) {
+    if (httpCode >= 200 && httpCode < 300) {
         httpPayload = client.getString(); // get response
     } else {
         Serial.printf("[HTTP] GET LUD06 failed (lud06Request file), error: %s\n",
@@ -38,7 +38,7 @@ String getLud06Callback(String lnurl) {
     client.end(); // Close connection
 
     DynamicJsonDocument doc(1024);
-    if (httpCode == 200) { // Check if the request was successful
+    if (httpCode >= 200 && httpCode < 300) { // Check if the request was successful
         deserializeJson(doc, httpPayload);
     }
 

@@ -11,7 +11,7 @@ DynamicJsonDocument claimInvoice(String lnurlwCallback, String invoice) {
     client.begin(fullUrl);       // Specify request destination
     int httpCode = client.GET(); // get request
 
-    if (httpCode) {
+    if (httpCode >= 200 && httpCode < 300) {
         httppayload = client.getString(); // get response
     } else {
         Serial.printf("[HTTP] GET claim invoice failed (claimInvoice file), error: %s\n",
@@ -25,7 +25,8 @@ DynamicJsonDocument claimInvoice(String lnurlwCallback, String invoice) {
         deserializeJson(doc, httppayload);
     } else {
         // Handle the error or indicate a failed request
-        doc["error"] = "Request failed with HTTP code: " + String(httpCode) + " (calimInvoice file)";
+        doc["error"] = "Request failed with HTTP code: " + String(httpCode) + " httppayload: " + (String)httppayload +
+                       " (calimInvoice file)";
     }
 
     return doc;

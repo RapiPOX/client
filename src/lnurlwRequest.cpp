@@ -11,7 +11,7 @@ String getLnurlwCallback(String lnurlw) {
     client.begin(lnurlw);        // Specify request destination
     int httpCode = client.GET(); // get request
 
-    if (httpCode) {
+    if (httpCode >= 200 && httpCode < 300) {
         httpPayload = client.getString(); // get response
     } else {
         Serial.printf("[HTTP] GET lnurlw failed (lnurlwRequest file), error: %s\n",
@@ -21,7 +21,7 @@ String getLnurlwCallback(String lnurlw) {
     client.end(); // Close connection
 
     DynamicJsonDocument doc(1024);
-    if (httpCode == 200) { // Check if the request was successful
+    if (httpCode >= 200 && httpCode < 300) { // Check if the request was successful
         deserializeJson(doc, httpPayload);
     }
 
