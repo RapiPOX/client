@@ -14,10 +14,10 @@
 
 ///////////////////////////////////////////////////// NFC module //////////////////////////////////////////////////////
 // define pins       // names in module
-#define PN532_SCK 2  // SCK
-#define PN532_MISO 5 // M
 #define PN532_MOSI 3 // TX
+#define PN532_MISO 5 // M
 #define PN532_SS 4   // RX
+#define PN532_SCK 2  // SCK
 
 // Define NFC module
 Adafruit_PN532 nfcModule(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
@@ -31,14 +31,14 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
 /////////////////////////////////////////////////// Peripherals ///////////////////////////////////////////////////////
 // LEDs
-#define LED_GREEN 32
 #define LED_RED 33
-#define BUZZER 25
-#define LED_YELLOW 27
+#define LED_YELLOW 25
+#define LED_GREEN 26
+#define BUZZER 27
 void confirmationLed();
 // Touch pins
-#define TOUCH_PIN_SUB 13
 #define TOUCH_PIN_ADD 15
+#define TOUCH_PIN_SUB 13
 // Screen
 const uint8_t PIN_SCL = 22; // SCK
 const uint8_t PIN_SDA = 21;
@@ -106,6 +106,9 @@ void setup(void) {
 
     if (!versionData) {
         Serial.printf("Didn't find PN5xx board");
+        screen.clear();
+        screen.drawStr(0, 20, "Not detected NFC");
+        screen.sendBuffer();
         while (1) {
             ; // stop
         }

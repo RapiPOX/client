@@ -1,4 +1,6 @@
-# POS lite nfc 
+# RapiPOX
+
+**Rap**ax **P**oint **O**f e**X**tensions
 
 ## Project hardware
 <img src="./images/pos_hardware.png" width=18%>
@@ -7,7 +9,7 @@
 
 ### Basic
 - [ ] Fix limits of the invoice depend to LNURL.
-- [ ] Optimize HTTP request functions.
+- [ ] Replace HTTP request for Websocket connection to my own sever.
 - [ ] Increment invoice amount of 100 in 21. (eg. 100, 121, 200, 221, 300, ...).
 
 ### Intermediate
