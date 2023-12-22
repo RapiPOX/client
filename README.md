@@ -3,7 +3,7 @@
 **Rap**ax **P**oint **O**f e**X**tensions
 
 ## Project hardware
-<img src="./images/pos_hardware.png" width=18%>
+<img src="./images/RapiPOX_v1.0.0.png" width=30%>
 
 ## Pending
 
@@ -11,6 +11,7 @@
 - [ ] Fix limits of the invoice depend to LNURL.
 - [ ] Replace HTTP request for Websocket connection to my own sever.
 - [ ] Increment invoice amount of 100 in 21. (eg. 100, 121, 200, 221, 300, ...).
+- [ ] Add 3D files
 
 ### Intermediate
 - [ ] Add more comments.
