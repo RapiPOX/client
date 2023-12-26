@@ -27,9 +27,9 @@
 ## Images
 
 <div style="overflow-x: auto; white-space: nowrap; display: flex; align-items: center;">
-    <img src="./images/pos_hardware.png" style="display: inline-block; width: 300px; margin-right: 10px;">
-    <img src="./images/RapiPOX_MVP.png" style="display: inline-block; width: 300px; margin-right: 10px;">
-    <img src="./images/RapiPOX_MVP_La_Crypta.jpg" style="display: inline-block; width: 300px; margin-right: 10px;">
+    <img src="./images/pos_hardware.png" alt="Hardware test" style="display: inline-block; width: 300px; margin-right: 10px;">
+    <img src="./images/RapiPOX_MVP.png" alt="RapiPOX MVP" style="display: inline-block; width: 300px; margin-right: 10px;">
+    <img src="./images/RapiPOX_MVP_La_Crypta.jpg" alt="RapiPOX in La Crypta" style="display: inline-block; width: 300px; margin-right: 10px;">
 </div>
 
 ## About the project
@@ -93,7 +93,7 @@ At the final of this section you will find an image with the electronic connecti
 All the cathodes of the LEDs and the GND of the buzzer are connected to the GND channel.
 
 | peripheral    | pin   |
-|...............|.......|
+|---------------|-------|
 | buzzer        | 36    |
 | green         | 25    |
 | yellow        | 33    |
@@ -108,7 +108,7 @@ For the test, touches are a simple open wire.
 `name in board` is a common name that the pins are on the module usually have.
 
 | name in board | pin           |
-|...............|...............|
+|---------------|---------------|
 | SCK           | 22            |
 | SDA           | 21            |
 | VCC           | VCC channel   |
@@ -119,7 +119,7 @@ For the test, touches are a simple open wire.
 Someone modules have a two switches to change communication type. Check it to be in SPI communication.
 
 | name in board | pin           |
-|...............|...............|
+|---------------|---------------|
 | MOSI/TX/SDA   | 3             |
 | SS/RX/SCL     | 4             |
 | MISO          | 5             |
@@ -129,7 +129,8 @@ Someone modules have a two switches to change communication type. Check it to be
 
 #### Image of the circuit connections
 
-![Electronic connections](./images/electronic_connections.png)
+<img src="./images/electronic_connections.png" alt="Electronic connections" width=300px/>
+
 
 ### Development Enviroment Setup 
 
