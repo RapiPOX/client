@@ -1,35 +1,41 @@
-#include "claimInvoice.hpp"
+/// Debug ///
+#define SERIALDEBUG
+#define TIMEDEBUG
+
 #include "env.hpp"
-#include "generateInvoice.hpp"
-#include "lnurlwRequest.hpp"
-#include "lud06Request.hpp"
+#include "extensions/tips/claimInvoice.hpp"
+#include "extensions/tips/generateInvoice.hpp"
+#include "extensions/tips/lnurlwRequest.hpp"
+#include "extensions/tips/lud06Request.hpp"
 #include <Adafruit_PN532_NTAG424.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <NTPClient.h>
 #include <SPI.h>
+#ifdef TIMEDEBUG
+#include <NTPClient.h>
+#endif
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <Wire.h>
 
-///////////////////////////////////////////////////// NFC module //////////////////////////////////////////////////////
-// define pins       // names in module
-#define PN532_MOSI 3 // TX
-#define PN532_MISO 5 // M
-#define PN532_SS 4   // RX
-#define PN532_SCK 2  // SCK
+/// NFC module ///
+#define PN532_MOSI 3
+#define PN532_MISO 5
+#define PN532_SS 4
+#define PN532_SCK 2
 
-// Define NFC module
 Adafruit_PN532 nfcModule(PN532_SCK, PN532_MISO, PN532_MOSI, PN532_SS);
 
-////////////////////////////////////////////////// Global variables ///////////////////////////////////////////////////
+/// Global variables ///
 String callbackLud06;
 
-/////////////////////////////////////////////////////// NTP ///////////////////////////////////////////////////////////
+#ifdef TIMEDEBUG
+/// Network Time Protocol (NTP) ///
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
+#endif
 
-/////////////////////////////////////////////////// Peripherals ///////////////////////////////////////////////////////
+/// Peripherals ///
 // LEDs
 #define LED_RED 33
 #define LED_YELLOW 25
@@ -40,11 +46,11 @@ void confirmationLed();
 #define TOUCH_PIN_ADD 15
 #define TOUCH_PIN_SUB 13
 // Screen
-const uint8_t PIN_SCL = 22; // SCK
+const uint8_t PIN_SCL = 22;
 const uint8_t PIN_SDA = 21;
 U8G2_SH1106_128X32_VISIONOX_F_HW_I2C screen(U8G2_R0, 4, PIN_SCL, PIN_SDA);
 
-/////////////////////////////////////////////////////// Tasks //////////////////////////////////////////////////////////
+/// Tasks ///
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 TaskHandle_t Task3;
@@ -57,13 +63,17 @@ void Task4code(void *vpParameters);
 void Task5code(void *vpParameters);
 
 void setup(void) {
+#ifdef SERIALDEBUG
     Serial.begin(9600);
+#endif
 
     /// Peripherals ///
+    // LEDs
     pinMode(LED_GREEN, OUTPUT);
     pinMode(LED_YELLOW, OUTPUT);
     pinMode(LED_RED, OUTPUT);
     pinMode(BUZZER, OUTPUT);
+    // Screen
     screen.begin();
     screen.setFont(u8g2_font_amstrad_cpc_extended_8f);
     screen.setContrast(40);
@@ -74,11 +84,15 @@ void setup(void) {
     /// WiFi connection ///
     WiFi.begin(ENV_SSID, ENV_PASS);
     if (WiFi.status() != WL_CONNECTED) {
+#ifdef SERIALDEBUG
         Serial.printf("Connecting to WiFi");
+#endif
         screen.clear();
         screen.drawStr(12, 10, "Concting WiFi");
         while (WiFi.status() != WL_CONNECTED) {
+#ifdef SERIALDEBUG
             Serial.printf(".");
+#endif
             screen.drawStr(40, 20, ".     ");
             screen.drawStr(40, 30, "     .");
             screen.sendBuffer();
@@ -88,44 +102,56 @@ void setup(void) {
             screen.sendBuffer();
             delay(250);
         }
+#ifdef SERIALDEBUG
         Serial.printf("\nConnected to the WiFi network\n");
+#endif
         screen.clear();
         screen.drawStr(4, 20, "WiFi connected!");
         screen.sendBuffer();
         delay(350);
     }
 
+#ifdef TIMEDEBUG
     /// NTP client ///
     WiFiUDP ntpUDP;
     NTPClient timeClient(ntpUDP, "pool.ntp.org");
     timeClient.begin();
+#endif
 
     /// NFC module ///
     nfcModule.begin();
     uint32_t versionData = nfcModule.getFirmwareVersion();
 
     if (!versionData) {
+#ifdef SERIALDEBUG
         Serial.printf("Didn't find PN5xx board");
+#endif
         screen.clear();
         screen.drawStr(0, 20, "Not detected NFC");
         screen.sendBuffer();
-        while (1) {
-            ; // stop
+        while (!(versionData = nfcModule.getFirmwareVersion())) {
+            ;
         }
     }
 
     // Print out chip version and firmware version
+#ifdef SERIALDEBUG
     Serial.printf("Found chip PN5");
     Serial.printf("%x\n", (versionData >> 24) & 0xFF);
     Serial.printf("Firmware ver. ");
     Serial.printf("%d", (versionData >> 16) & 0xFF);
     Serial.printf(".");
     Serial.printf("%d\n", (versionData >> 8) & 0xFF);
+#endif
 
     /// Obtain LUD06 ///
+#ifdef SERIALDEBUG
+
     Serial.printf("Obtaining LUD06 callback\n");
+#endif
     callbackLud06 = getLud06Callback(ENV_LNURL);
 
+    /// Tasks ///
     // Task1code is a task to interact with card
     xTaskCreatePinnedToCore(Task1code, /* Function to implement the task */
                             "Task1",   /* Name of the task */
@@ -185,8 +211,10 @@ void loop(void) {
             if (bytesRead) {
                 vTaskResume(Task5);
 
+#ifdef TIMEDEBUG
                 Serial.printf("Start time\n");
                 unsigned long startTime = timeClient.getEpochTime();
+#endif
 
                 vTaskResume(Task1);
                 vTaskResume(Task2);
@@ -199,8 +227,10 @@ void loop(void) {
                 DynamicJsonDocument doc = claimInvoice(callbackLnurlw, invoice); // Claim invoice
                 invoiceWait = false;
 
+#ifdef TIMEDEBUG
                 unsigned long endTime = timeClient.getEpochTime();
                 Serial.printf("\nTime elapsed: %d seconds\n", endTime - startTime);
+#endif
 
                 serializeJsonPretty(doc, Serial); // Print the result after  paying the invoice (or try to)
                 invoiceStatus = doc["status"].as<String>();
@@ -301,7 +331,9 @@ void Task1code(void *vpParameters) {
     for (;;) {
         Serial.printf("Task1 running on core %d\n", xPortGetCoreID());
 
+#ifdef TIMEDEBUG
         unsigned long startTime = timeClient.getEpochTime();
+#endif
 
         /// Dump the data ///
         data[bytesRead] = 0;
@@ -310,8 +342,10 @@ void Task1code(void *vpParameters) {
 
         callbackLnurlw = getLnurlwCallback(lnurlw); // Obtain LNURLw callback
 
+#ifdef TIMEDEBUG
         unsigned long endTime = timeClient.getEpochTime();
         Serial.printf("\nTime elapsed in Task1: %d seconds\n", endTime - startTime);
+#endif
 
         vTaskSuspend(Task1);
     }
@@ -324,13 +358,17 @@ void Task2code(void *vpParameters) {
     for (;;) {
         Serial.printf("Task2 running on core %d\n", xPortGetCoreID());
 
+#ifdef TIMEDEBUG
         unsigned long startTime = timeClient.getEpochTime();
+#endif
 
         // Serial.printf("Invoice amount: %s\n", amount.c_str());
         invoice = generateInvoice(callbackLud06, amount); // Generate invoice
 
+#ifdef TIMEDEBUG
         unsigned long endTime = timeClient.getEpochTime();
         Serial.printf("\nTime elapsed in Task2: %d seconds\n", endTime - startTime);
+#endif
 
         vTaskSuspend(Task2);
     }
