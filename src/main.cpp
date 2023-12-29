@@ -16,6 +16,8 @@
 // Comment the following lines to disable debug
 #define SERIALDEBUG
 #define TIMEDEBUG
+// Comment the following lines to disable extensions acordeglly
+#define EXTENSIONTIPS
 
 /// LEDs ///
 #define LED_RED 33
@@ -45,22 +47,32 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 #endif
 
-/// Tasks ///
-TaskHandle_t Task1GetLnurlwCallback;
-TaskHandle_t Task2GetInvoice;
-TaskHandle_t Task3ThinkingLed;
-TaskHandle_t Task4FixAmount;
-TaskHandle_t Task5ConfirmationLed;
-void Task1code(void *vpParameters);
-void Task2code(void *vpParameters);
-void Task3code(void *vpParameters);
-void Task4code(void *vpParameters);
-void Task5code(void *vpParameters);
+/// Extensions ///
+// Extension Tips
+#ifdef EXTENSIONTIPS
+TaskHandle_t threadExtensionTips;
+void threadExtensionTipsCode(void *vpParameters);
 
-/// Task parameters ///
+TaskHandle_t task1ExtensionTipsGetLnurlwCallback;
+void task1ExtensionTipsGetLnurlwCallbackCode(void *vpParameters);
+TaskHandle_t task2ExtensionTipsGetInvoice;
+void task2ExtensionTipsGetInvoiceCode(void *vpParameters);
+TaskHandle_t task3ExtensionTipsAfterReadCard;
+void task3ExtensionTipsAfterReadCardCode(void *vpParameters);
+TaskHandle_t task4ExtensionTipsSetAmount;
+void task4ExtensionTipsSetAmountCode(void *vpParameters);
+#endif
+
+// Task parameters
 // struct Task1Parameters {
 //     String lnurlw;
 // };
+
+/// Auxiliar functions ///
+uint8_t functionThinkingLed(bool displayedTitle, uint8_t delayTime);
+void auxFunctionConfirmationLed(void);
+void auxFunctionAmountBlinkingLed(int amount);
+void auxFunctionErrorLed(void);
 
 /// Global variables ///
 String callbackLud06;
@@ -155,134 +167,34 @@ void setup(void) {
     Serial.printf("%d\n", (versionData >> 8) & 0xFF);
 #endif
 
-    /// Obtain LUD06 ///
-#ifdef SERIALDEBUG
-    Serial.printf("Obtaining LUD06 callback\n");
-#endif
-    callbackLud06 = getLud06Callback(ENV_LNURL);
+#ifdef EXTENSIONTIPS
+    /// Extension Tips ///
+    // threadExtensionTipsCode is a task to tips extension
+    xTaskCreatePinnedToCore(threadExtensionTipsCode, "threadExtensionTips", 10000, NULL, 0, &threadExtensionTips, 1);
 
-    /// Tasks ///
-    // Task1code is a task to interact with card
-    xTaskCreatePinnedToCore(Task1code, "Task1", 10000, NULL, 0, &Task1GetLnurlwCallback, 0);
-    // Task2code is a task to generate invoice
-    xTaskCreatePinnedToCore(Task2code, "Task2", 10000, NULL, 0, &Task2GetInvoice, 0);
-    // Task3code is a task of status LED
-    xTaskCreatePinnedToCore(Task3code, "Task3", 10000, NULL, 0, &Task3ThinkingLed, 0);
-    // Task4code is a task to adjust amount
-    xTaskCreatePinnedToCore(Task4code, "Task4", 10000, NULL, 0, &Task4FixAmount, 0);
-    // Task5code is a task of confirmation card read
-    xTaskCreatePinnedToCore(Task5code, "Task5", 10000, NULL, 0, &Task5ConfirmationLed, 0);
+    // task1ExtensionTipsGetLnurlw is a task to interact with card
+    xTaskCreatePinnedToCore(task1ExtensionTipsGetLnurlwCallbackCode, "Task1ExtensionTips", 10000, NULL, 0,
+                            &task1ExtensionTipsGetLnurlwCallback, 0);
+    // task2ExtensionTipsGetInvoiceCode is a task to generate invoice
+    xTaskCreatePinnedToCore(task2ExtensionTipsGetInvoiceCode, "Task2ExtensionTips", 10000, NULL, 0,
+                            &task2ExtensionTipsGetInvoice, 0);
+    // task3ExtensionTipsThinkingLedCode is a task of thinking LED
+    xTaskCreatePinnedToCore(task3ExtensionTipsAfterReadCardCode, "Task3ExtensionTips", 10000, NULL, 0,
+                            &task3ExtensionTipsAfterReadCard, 0);
+    // task4ExtensionTipsSetAmountCode is a task to adjust amount
+    xTaskCreatePinnedToCore(task4ExtensionTipsSetAmountCode, "Task4ExtensionTips", 10000, NULL, 0,
+                            &task4ExtensionTipsSetAmount, 0);
+#endif
 }
 
 void loop(void) {
 #ifdef SERIALDEBUG
     Serial.printf("\nloop running on core %d\n", xPortGetCoreID());
-    Serial.printf("Waiting for an ISO14443A Card\n");
-#endif
-    amount = "1000"; // reset amount
-    vTaskResume(Task4FixAmount);
-
-    digitalWrite(LED_GREEN, HIGH);
-    screen.clear();
-    screen.drawStr(0, 10, "Invoice amount:");
-    screen.drawStr(48, 20, ((String)(amount.toInt() / 1000)).c_str());
-    screen.drawStr(0, 32, "Tap card to pay");
-    screen.sendBuffer();
-
-    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
-    uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-    uint8_t success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-
-    invoiceStatus = "";
-    if (success) {
-#ifdef SERIALDEBUG
-        Serial.printf("Found an ISO14443A card\n");
-#endif
-        vTaskSuspend(Task4FixAmount);
-
-        if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
-            bytesRead = nfcModule.ntag424_ISOReadFile(data);
-            invoiceWait = true;
-
-            if (bytesRead) {
-                vTaskResume(Task5ConfirmationLed);
-
-#ifdef TIMEDEBUG
-                Serial.printf("Start time\n");
-                unsigned long startTime = timeClient.getEpochTime();
 #endif
 
-                vTaskResume(Task1GetLnurlwCallback);
-                vTaskResume(Task2GetInvoice);
-
-                while (eTaskGetState(Task1GetLnurlwCallback) != eSuspended ||
-                       eTaskGetState(Task3ThinkingLed) != eSuspended) { // Wait for the tasks to finish
-                    delay(10);
-                }
-
-                DynamicJsonDocument doc = claimInvoice(callbackLnurlw, invoice); //*! TODO: return enum
-                invoiceWait = false;
-
-#ifdef TIMEDEBUG
-                unsigned long endTime = timeClient.getEpochTime();
-                Serial.printf("\nTime elapsed: %d seconds\n", endTime - startTime);
-#endif
-
-                //*! TODO: AFUERA!!!
-                serializeJsonPretty(doc, Serial); // Print the result after  paying the invoice (or try to)
-                invoiceStatus = doc["status"].as<String>();
-            }
-#ifdef SERIALDEBUG
-            else {
-                Serial.printf("ERROR: Failed to read data\n");
-            }
-#endif
-        }
-#ifdef SERIALDEBUG
-        else {
-            Serial.printf("ERROR: Not a NTAG424 card\n");
-            delay(500);
-        }
-#endif
-    }
-#ifdef SERIALDEBUG
-    else {
-        Serial.printf("ERROR: Failed to read card\n");
-        delay(500);
-    }
-#endif
-
-    //*! TODO: modify to enum
-    if (invoiceStatus == "OK") {
-        delay(250);
-        screen.clear();
-        screen.drawStr(44, 20, "Paid!");
-        screen.sendBuffer();
-
-        int amountSats = amount.toInt() / 1000;
-        //*! TODO :convert to function
-        do {
-            digitalWrite(LED_GREEN, HIGH);
-            digitalWrite(BUZZER, HIGH);
-            delay(250);
-            digitalWrite(LED_GREEN, LOW);
-            digitalWrite(BUZZER, LOW);
-            delay(250);
-        } while (amountSats /= 10);
-    } else {
-        delay(250);
-        screen.clear();
-        screen.drawStr(40, 10, "ERROR!");
-        screen.drawStr(28, 20, "Try again");
-        screen.sendBuffer();
-        //*! TODO convert to function
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_RED, HIGH);
-        digitalWrite(BUZZER, HIGH);
-        delay(1500);
-        digitalWrite(LED_RED, LOW);
-        digitalWrite(BUZZER, LOW);
-    }
+// #ifdef EXTENSIONTIPS
+//     vTaskResume(threadExtensionTips);
+// #endif
 
     // Check if the WiFi connection is lost
     if (WiFi.status() != WL_CONNECTED) {
@@ -311,45 +223,191 @@ void loop(void) {
     delay(500);
 }
 
-// Task5code is a task of confirmation card read
-void Task5code(void *vpParameters) {
-#ifdef SERIALDEBUG
-    Serial.printf("Task5 suspend\n");
-#endif
-    vTaskSuspend(Task5ConfirmationLed); // Suspend the task when it is created
-    for (;;) {
-        digitalWrite(LED_GREEN, LOW);
-        delay(100);
-        digitalWrite(LED_GREEN, HIGH);
-        digitalWrite(BUZZER, HIGH);
-        delay(100);
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(BUZZER, LOW);
-        delay(100);
-        digitalWrite(LED_GREEN, HIGH);
-        digitalWrite(BUZZER, HIGH);
-        delay(100);
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(BUZZER, LOW);
-        screen.clear();
-        screen.drawStr(24, 20, "Read card!");
-        screen.sendBuffer();
-        delay(500);
+/*************************************************************************************************/
+/*                                   Auxiliar functions                                          */
+/*************************************************************************************************/
 
-        vTaskResume(Task3ThinkingLed);
-        vTaskSuspend(Task5ConfirmationLed);
+uint8_t auxFunctionThinkingLed(bool displayedTitle, uint8_t delayTime) {
+    if (!displayedTitle) {
+        screen.clear();
+        screen.drawStr(32, 10, "Thinking");
+        screen.sendBuffer();
+    }
+
+    digitalWrite(LED_YELLOW, HIGH);
+    screen.drawStr(40, 20, ".     ");
+    screen.drawStr(40, 30, "     .");
+    screen.sendBuffer();
+    delay(delayTime);
+    digitalWrite(LED_YELLOW, LOW);
+    screen.drawStr(40, 20, "     .");
+    screen.drawStr(40, 30, ".     ");
+    screen.sendBuffer();
+    delay(delayTime);
+
+    return delayTime > 50 ? delayTime - 10 : 50;
+}
+
+void auxFunctionConfirmationLed(void) {
+    digitalWrite(LED_GREEN, LOW);
+    delay(100);
+    digitalWrite(LED_GREEN, HIGH);
+    digitalWrite(BUZZER, HIGH);
+    delay(100);
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(BUZZER, LOW);
+    delay(100);
+    digitalWrite(LED_GREEN, HIGH);
+    digitalWrite(BUZZER, HIGH);
+    delay(100);
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(BUZZER, LOW);
+}
+
+void auxFunctionAmountBlinkingLed(int amount) {
+    do {
+        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(BUZZER, HIGH);
+        delay(250);
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(BUZZER, LOW);
+        delay(250);
+    } while (amount /= 10);
+}
+
+void auxFunctionErrorLed(void) {
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_RED, HIGH);
+    digitalWrite(BUZZER, HIGH);
+    delay(1500);
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(BUZZER, LOW);
+}
+
+/*************************************************************************************************/
+/*                                     Extension Tips                                            */
+/*************************************************************************************************/
+
+#ifdef EXTENSIONTIPS
+/// threadExtensionTipsCode is a task to tips extension ///
+void threadExtensionTipsCode(void *vpParameters) {
+    // Obtain LUD06
+#ifdef SERIALDEBUG
+    Serial.printf("Obtaining LUD06 callback\n");
+#endif
+    callbackLud06 = getLud06Callback(ENV_LNURL);
+
+#ifdef SERIALDEBUG
+    Serial.printf("taskExtensionTips suspend\n");
+#endif
+    vTaskSuspend(threadExtensionTips); // Suspend the task when it is created
+    for (;;) {
+#ifdef SERIALDEBUG
+        Serial.printf("taskExtensionTips running on core %d\n", xPortGetCoreID());
+        Serial.printf("Waiting for an ISO14443A Card\n");
+#endif
+        amount = "1000"; // reset amount
+        vTaskResume(task4ExtensionTipsSetAmount);
+
+        digitalWrite(LED_GREEN, HIGH);
+        screen.clear();
+        screen.drawStr(0, 10, "Invoice amount:");
+        screen.drawStr(48, 20, ((String)(amount.toInt() / 1000)).c_str());
+        screen.drawStr(0, 32, "Tap card to pay");
+        screen.sendBuffer();
+
+        uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
+        uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+        uint8_t success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+
+        invoiceStatus = "";
+        if (success) {
+#ifdef SERIALDEBUG
+            Serial.printf("Found an ISO14443A card\n");
+#endif
+            vTaskSuspend(task4ExtensionTipsSetAmount);
+
+            if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
+                bytesRead = nfcModule.ntag424_ISOReadFile(data);
+                invoiceWait = true;
+
+                if (bytesRead) {
+                    vTaskResume(task3ExtensionTipsAfterReadCard);
+
+#ifdef TIMEDEBUG
+                    Serial.printf("Start time\n");
+                    unsigned long startTime = timeClient.getEpochTime();
+#endif
+
+                    vTaskResume(task1ExtensionTipsGetLnurlwCallback);
+                    vTaskResume(task2ExtensionTipsGetInvoice);
+
+                    while (eTaskGetState(task1ExtensionTipsGetLnurlwCallbackCode) != eSuspended ||
+                           eTaskGetState(task3ExtensionTipsAfterReadCardCode) !=
+                               eSuspended) { // Wait for the tasks to finish
+                        delay(10);
+                    }
+
+                    DynamicJsonDocument doc = claimInvoice(callbackLnurlw, invoice); //*! TODO: return enum
+                    invoiceWait = false;
+
+#ifdef TIMEDEBUG
+                    unsigned long endTime = timeClient.getEpochTime();
+                    Serial.printf("\nTime elapsed: %d seconds\n", endTime - startTime);
+#endif
+
+                    ///*! TODO: AFUERA!!! ///
+                    serializeJsonPretty(doc, Serial); // Print the result after  paying the invoice (or try to)
+                    invoiceStatus = doc["status"].as<String>();
+                }
+#ifdef SERIALDEBUG
+                else {
+                    Serial.printf("ERROR: Failed to read data\n");
+                }
+#endif
+            }
+#ifdef SERIALDEBUG
+            else {
+                Serial.printf("ERROR: Not a NTAG424 card\n");
+                delay(500);
+            }
+#endif
+        }
+#ifdef SERIALDEBUG
+        else {
+            Serial.printf("ERROR: Failed to read card\n");
+            delay(500);
+        }
+#endif
+
+        //*! TODO: modify to enum
+        if (invoiceStatus == "OK") {
+            delay(250);
+            screen.clear();
+            screen.drawStr(44, 20, "Paid!");
+            screen.sendBuffer();
+            int amountSats = amount.toInt() / 1000;
+            auxFunctionAmountBlinkingLed(amountSats);
+        } else {
+            delay(250);
+            screen.clear();
+            screen.drawStr(40, 10, "ERROR!");
+            screen.drawStr(28, 20, "Try again");
+            screen.sendBuffer();
+            auxFunctionErrorLed();
+        }
     }
 }
 
-// Task1code is a task to interact with card
-void Task1code(void *vpParameters) {
+/// task1ExtensionTipsGetLnurlw is a task to interact with card ///
+void task1ExtensionTipsGetLnurlw(void *vpParameters) {
 #ifdef SERIALDEBUG
-    Serial.printf("Task1 suspend\n");
+    Serial.printf("task1ExtensionTipsGetLnurlwCallbackCode suspend\n");
 #endif
-    vTaskSuspend(Task1GetLnurlwCallback); // Suspend the task when it is created
+    vTaskSuspend(task1ExtensionTipsGetLnurlwCallback); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("Task1 running on core %d\n", xPortGetCoreID());
+        Serial.printf("task1ExtensionTipsGetLnurlwCallbackCode running on core %d\n", xPortGetCoreID());
 #endif
 
 #ifdef TIMEDEBUG
@@ -367,29 +425,32 @@ void Task1code(void *vpParameters) {
 
 #ifdef TIMEDEBUG
         unsigned long endTime = timeClient.getEpochTime();
-        Serial.printf("\nTime elapsed in Task1: %d seconds\n", endTime - startTime);
+        Serial.printf("\nTime elapsed in task1ExtensionTipsGetLnurlwCallbackCode: %d seconds\n", endTime - startTime);
 #endif
 
-        vTaskSuspend(Task1GetLnurlwCallback);
+        vTaskSuspend(task1ExtensionTipsGetLnurlwCallback);
     }
 }
 
-// Task2code is a task to generate invoice
-void Task2code(void *vpParameters) {
+/// task2ExtensionTipsGetInvoiceCode is a task to generate invoice ///
+void task2ExtensionTipsGetInvoiceCode(void *vpParameters) {
 #ifdef SERIALDEBUG
-    Serial.printf("Task2 suspend\n");
+    Serial.printf("task2ExtensionTipsGetInvoiceCode suspend\n");
 #endif
-    vTaskSuspend(Task2GetInvoice); // Suspend the task when it is created
+    vTaskSuspend(task2ExtensionTipsGetInvoice); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("Task2 running on core %d\n", xPortGetCoreID());
+        Serial.printf("task2ExtensionTipsGetInvoiceCode running on core %d\n", xPortGetCoreID());
 #endif
 
 #ifdef TIMEDEBUG
         unsigned long startTime = timeClient.getEpochTime();
 #endif
 
-        // Serial.printf("Invoice amount: %s\n", amount.c_str());
+#ifdef SERIALDEBUG
+        Serial.printf("Invoice amount: %s\n", amount.c_str());
+#endif
+
         invoice = getInvoice(callbackLud06, amount); // Generate invoice
 
 #ifdef TIMEDEBUG
@@ -397,49 +458,43 @@ void Task2code(void *vpParameters) {
         Serial.printf("\nTime elapsed in Task2: %d seconds\n", endTime - startTime);
 #endif
 
-        vTaskSuspend(Task2GetInvoice);
+        vTaskSuspend(task2ExtensionTipsGetInvoice);
     }
 }
 
-// Task3code is a task of status LED
-void Task3code(void *vpParameters) {
+/// task3ExtensionTipsAfterReadCardCode is a task to confirm and thinking led after read card ///
+void task3ExtensionTipsAfterReadCardCode(void *vpParameters) {
 #ifdef SERIALDEBUG
-    Serial.printf("Task3 suspend\n");
+    Serial.printf("task3ExtensionTipsAfterReadCardCode suspend\n");
 #endif
-    vTaskSuspend(Task3ThinkingLed); // Suspend the task when it is created
+    vTaskSuspend(task3ExtensionTipsAfterReadCard); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("Task3 running on core %d\n", xPortGetCoreID());
+        Serial.printf("task3ExtensionTipsAfterReadCardCode running on core %d\n", xPortGetCoreID());
 #endif
+        auxFunctionConfirmationLed();
         screen.clear();
-        screen.drawStr(32, 10, "Thinking");
+        screen.drawStr(24, 20, "Read card!");
         screen.sendBuffer();
+        delay(500);
 
         uint8_t delayTime = 250;
-        while (invoiceWait || eTaskGetState(Task1GetLnurlwCallback) != eSuspended ||
-               eTaskGetState(Task2GetInvoice) != eSuspended) {
-            digitalWrite(LED_YELLOW, HIGH);
-            screen.drawStr(40, 20, ".     ");
-            screen.drawStr(40, 30, "     .");
-            screen.sendBuffer();
-            delay(delayTime);
-            digitalWrite(LED_YELLOW, LOW);
-            screen.drawStr(40, 20, "     .");
-            screen.drawStr(40, 30, ".     ");
-            screen.sendBuffer();
-            delay(delayTime);
-            delayTime = delayTime > 50 ? delayTime - 10 : 50;
+        bool displayedTitle = false;
+        while (invoiceWait || eTaskGetState(task1ExtensionTipsGetLnurlwCallbackCode) != eSuspended ||
+               eTaskGetState(task2ExtensionTipsGetInvoiceCode) != eSuspended) {
+            delayTime = auxFunctionThinkingLed(displayedTitle, delayTime);
+            displayedTitle = true;
         }
 
-        vTaskSuspend(Task3ThinkingLed);
+        vTaskSuspend(task3ExtensionTipsAfterReadCard);
     }
 }
 
-// Task4code is a task to adjust amount
-void Task4code(void *vpParameters) {
+/// task4ExtensionTipsSetAmountCode is a task to adjust amount ///
+void task4ExtensionTipsSetAmountCode(void *vpParameters) {
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("Task4 running on core %d\n", xPortGetCoreID());
+        Serial.printf("task4ExtensionTipsSetAmountCode running on core %d\n", xPortGetCoreID());
 #endif
         if (touchRead(TOUCH_PIN_SUB) < 40) {
             if (amount.toInt() <= 1000) {
@@ -485,3 +540,4 @@ void Task4code(void *vpParameters) {
         }
     }
 }
+#endif // EXTENSIONTIPS
