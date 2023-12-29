@@ -166,12 +166,20 @@ Someone modules have a two switches to change communication type. Check it to be
 
 #### To Do
 
+- [ ] Replace HTTP request for Websocket connection to my own sever.
 - [ ] Beautifuly code.
-- [ ] Modularize extensions.
-- [ ] Visual Home Menu.
+    - [x] Rename task with camelCase.
+    - [x] Separate tips code of the loop. (ex-*Modularize extensions*)
+    - [ ] Add debug define to extensions/tips/*
+    - [ ] Visual Home Menu.
+    - [ ] Add elegible/activate extension to Home Menu. (Add extension thread to loop).
+    - [ ] Task parameters (delete global variables).
+    - [ ] Normalize and documentate names:
+        - thread: multithreading extension code
+        - task: multithreading task depend of an extension
+- [ ] Rename extension tips files to get/set.
 - [ ] Error handling.
 - [ ] Fix limits of the invoice depend to LNURL.
-- [ ] Replace HTTP request for Websocket connection to my own sever.
 - [ ] Increment invoice amount of 100 in 21. (eg. 100, 121, 200, 221, 300, ...).
 - [ ] Acelerate increment and decrement invoice amount.
 - [ ] Play epic music with the max tip of an sesion.
