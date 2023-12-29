@@ -192,9 +192,9 @@ void loop(void) {
     Serial.printf("\nloop running on core %d\n", xPortGetCoreID());
 #endif
 
-// #ifdef EXTENSIONTIPS
-//     vTaskResume(threadExtensionTips);
-// #endif
+    // #ifdef EXTENSIONTIPS
+    //     vTaskResume(threadExtensionTips);
+    // #endif
 
     // Check if the WiFi connection is lost
     if (WiFi.status() != WL_CONNECTED) {
@@ -298,12 +298,12 @@ void threadExtensionTipsCode(void *vpParameters) {
     callbackLud06 = getLud06Callback(ENV_LNURL);
 
 #ifdef SERIALDEBUG
-    Serial.printf("taskExtensionTips suspend\n");
+    Serial.printf("threadExtensionTipsCode suspend\n");
 #endif
     vTaskSuspend(threadExtensionTips); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("taskExtensionTips running on core %d\n", xPortGetCoreID());
+        Serial.printf("threadExtensionTipsCode running on core %d\n", xPortGetCoreID());
         Serial.printf("Waiting for an ISO14443A Card\n");
 #endif
         amount = "1000"; // reset amount
