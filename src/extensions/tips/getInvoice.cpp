@@ -1,8 +1,8 @@
-#include "generateInvoice.hpp"
+#include "getInvoice.hpp"
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 
-String generateInvoice(String callbackLud06, String amount) {
+String getInvoice(String callbackLud06, String amount) {
     HTTPClient client;
     String httpPayload;
 
