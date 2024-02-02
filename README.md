@@ -1,5 +1,10 @@
 # RapiPOX
 
+![Latest Release](https://badgen.net/github/release/rapax00/rapipox/stable/?color=blue&icon=bitcoin-lightning)
+![License](https://badgen.net/github/license/rapax00/rapipox/?color=cyan)
+![Stars](https://badgen.net/github/stars/rapax00/rapipox/?color=yellow)
+![Forks](https://badgen.net/github/forks/rapax00/rapipox/?color=grey)
+
 > **Rap**ax **P**oint **O**f e**X**tensions.
  
 > Hardware dispositive with multiple extensions (in progress) realted with Lightning Network and NOSTR.
@@ -17,7 +22,8 @@
 4. [Setup](#setup)
     1. [Hardware Setup](#hardware-setup)
     2. [Development Enviroment Setup](#development-enviroment-setup)
-5. [Developing](#developing)
+5. [Contribution Guidelines](#contribution-guidelines)
+6. [Developing](#developing)
     1. [Code](#code)
     2. [Others](#others)
     3. [Extensions](#extensions)
@@ -132,7 +138,7 @@ Someone modules have a two switches to change communication type. Check it to be
 <img src="./images/electronic_connections.png" alt="Electronic connections" width=300px/>
 
 
-### Development Enviroment Setup 
+### Development Enviroment Setup
 
 1. Install [PlatformIO extension](https://platformio.org/install/ide?install=vscode) in VSCode. I recomend looking at this [Quick Start Guide](https://docs.platformio.org/en/latest/integration/ide/vscode.html#quick-start).
 2. Clone this repo within `~/PlatformIO/Projects` directory.
@@ -150,6 +156,12 @@ Someone modules have a two switches to change communication type. Check it to be
 
 1. Connect your ESP32.
 2. Upload project using PlatformIO.
+
+## Contribution Guidelines
+
+- Current project was adapted to work with PlatformIO. See [Development Enviroment Setup](#development-enviroment-setup).
+- Current project works with ESP-WROOM-32.
+- All libraries needed shown on [platform.ini](https://github.com/rapax00/RapiPOX/blob/main/platformio.ini).
 
 ## Developing
 
@@ -193,10 +205,12 @@ Someone modules have a two switches to change communication type. Check it to be
 
 #### To Do
 
+- [ ] Contribution guidlines. ***In progress***.
 - [ ] Add 3D files and print configuration.
-- [ ] Contribution guidlines.
 - [ ] Make a PCB for the electronic circuit.
 - [ ] Add numeric keyboard.
+- [ ] Add relese in GitHub.
+- [ ] Add license.
 
 ### Extensions
 
@@ -206,7 +220,3 @@ There are extensions ideas to incorporate into the project.
 - [ ] [LaWallet light notification.](https://github.com/rapax00/light-lawallet)
 - [ ] Zap light notification in NOSTR.
 - [ ] Lightning Node
-
-## Donations
-
-If you would like to contribute with this project you can send donation to the following LNURL (obviously) ⚡rapax@lawallet.ar⚡.
