@@ -19,16 +19,17 @@
 // Comment the following lines to disable extensions acordeglly
 #define EXTENSIONTIPS
 
-/// LEDs ///
+/// Peripherals ///
+// LEDs
 #define LED_RED 33
 #define LED_YELLOW 25
 #define LED_GREEN 26
-/// Buzzer ///
+// Buzzer
 #define BUZZER 27
-/// Touch pins ///
+// Touch pins
 #define TOUCH_PIN_ADD 15
 #define TOUCH_PIN_SUB 13
-/// Screen ///
+// Screen
 const uint8_t PIN_SCL = 22;
 const uint8_t PIN_SDA = 21;
 U8G2_SH1106_128X32_VISIONOX_F_HW_I2C screen(U8G2_R0, 4, PIN_SCL, PIN_SDA);
@@ -62,11 +63,6 @@ void task3ExtensionTipsAfterReadCardCode(void *vpParameters);
 TaskHandle_t task4ExtensionTipsSetAmount;
 void task4ExtensionTipsSetAmountCode(void *vpParameters);
 #endif
-
-// Task parameters
-// struct Task1Parameters {
-//     String lnurlw;
-// };
 
 /// Auxiliar functions ///
 uint8_t functionThinkingLed(bool displayedTitle, uint8_t delayTime);
@@ -328,7 +324,7 @@ void threadExtensionTipsCode(void *vpParameters) {
             vTaskSuspend(task4ExtensionTipsSetAmount);
 
             if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
-                bytesRead = nfcModule.ntag424_ISOReadFile(data);
+                bytesRead = nfcModule.ntag424_ISOReadFile(data, sizeof(data));
                 invoiceWait = true;
 
                 if (bytesRead) {
@@ -342,8 +338,8 @@ void threadExtensionTipsCode(void *vpParameters) {
                     vTaskResume(task1ExtensionTipsGetLnurlwCallback);
                     vTaskResume(task2ExtensionTipsGetInvoice);
 
-                    while (eTaskGetState(task1ExtensionTipsGetLnurlwCallbackCode) != eSuspended ||
-                           eTaskGetState(task3ExtensionTipsAfterReadCardCode) !=
+                    while (eTaskGetState(task1ExtensionTipsGetLnurlwCallback) != eSuspended ||
+                           eTaskGetState(task3ExtensionTipsAfterReadCard) !=
                                eSuspended) { // Wait for the tasks to finish
                         delay(10);
                     }
@@ -400,7 +396,7 @@ void threadExtensionTipsCode(void *vpParameters) {
 }
 
 /// task1ExtensionTipsGetLnurlw is a task to interact with card ///
-void task1ExtensionTipsGetLnurlw(void *vpParameters) {
+void task1ExtensionTipsGetLnurlwCallbackCode(void *vpParameters) {
 #ifdef SERIALDEBUG
     Serial.printf("task1ExtensionTipsGetLnurlwCallbackCode suspend\n");
 #endif
@@ -480,8 +476,8 @@ void task3ExtensionTipsAfterReadCardCode(void *vpParameters) {
 
         uint8_t delayTime = 250;
         bool displayedTitle = false;
-        while (invoiceWait || eTaskGetState(task1ExtensionTipsGetLnurlwCallbackCode) != eSuspended ||
-               eTaskGetState(task2ExtensionTipsGetInvoiceCode) != eSuspended) {
+        while (invoiceWait || eTaskGetState(task1ExtensionTipsGetLnurlwCallback) != eSuspended ||
+               eTaskGetState(task2ExtensionTipsGetInvoice) != eSuspended) {
             delayTime = auxFunctionThinkingLed(displayedTitle, delayTime);
             displayedTitle = true;
         }
