@@ -492,7 +492,8 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
 #ifdef SERIALDEBUG
         Serial.printf("task4ExtensionTipsSetAmountCode running on core %d\n", xPortGetCoreID());
 #endif
-        if (touchRead(TOUCH_PIN_SUB) < 40) {
+        int amountToSubAdd = 100000;
+        while (touchRead(TOUCH_PIN_SUB) < 40) {
             if (amount.toInt() <= 1000) {
 #ifdef SERIALDEBUG
                 Serial.printf("Minimal limit!\n");
@@ -506,7 +507,7 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
                 if (amount.toInt() == 100000) {
                     amount = amount.toInt() - 79000;
                 } else {
-                    amount = amount.toInt() == 21000 ? amount.toInt() - 20000 : amount.toInt() - 100000;
+                    amount = amount.toInt() == 21000 ? amount.toInt() - 20000 : amount.toInt() - amountToSubAdd;
                 }
             }
             screen.drawStr(0, 10, "Invoice amount:");
@@ -518,11 +519,20 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
             Serial.printf("Amount: %d SATS\n", amountInt);
 #endif
             delay(350);
-        } else if (touchRead(TOUCH_PIN_ADD) < 40) {
+
+            uint8_t count;
+            count++;
+            if (count == 3) {
+                amountToSubAdd = 1000000;
+            } else if (count == 9) {
+                amountToSubAdd = 10000000;
+            }
+        }
+        while (touchRead(TOUCH_PIN_ADD) < 40) {
             if (amount.toInt() == 1000) {
                 amount = amount.toInt() + 20000;
             } else {
-                amount = amount.toInt() == 21000 ? amount.toInt() + 79000 : amount.toInt() + 100000;
+                amount = amount.toInt() == 21000 ? amount.toInt() + 79000 : amount.toInt() + amountToSubAdd;
             }
             screen.drawStr(0, 10, "Invoice amount:");
             screen.drawStr(48, 20, (((String)(amount.toInt() / 1000)) + "  ").c_str());
@@ -533,6 +543,14 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
             Serial.printf("Amount: %d SATS\n", amountInt);
 #endif
             delay(350);
+
+            uint8_t count;
+            count++;
+            if (count == 3) {
+                amountToSubAdd = 1000000;
+            } else if (count == 9) {
+                amountToSubAdd = 10000000;
+            }
         }
     }
 }
