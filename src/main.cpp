@@ -1,14 +1,17 @@
+#include "Bitcoin.h"
+#include "Hash.h"
 #include "env.hpp"
-#include "extensions/tips/claimInvoice.hpp"
-#include "extensions/tips/getInvoice.hpp"
-#include "extensions/tips/lnurlwRequest.hpp"
-#include "extensions/tips/lud06Request.hpp"
+#include "utils/content.hpp"
+#include "utils/getPubkeyFromLnurlw.hpp"
+#include "utils/nostrEvent.hpp"
+#include "utils/req.hpp"
 #include <Adafruit_PN532_NTAG424.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <NTPClient.h>
 #include <SPI.h>
 #include <U8g2lib.h>
+#include <WebSocketsClient.h>
 #include <WiFi.h>
 #include <Wire.h>
 
@@ -48,18 +51,19 @@ WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 #endif
 
+/// WebSocket ///
+String wsMsg;
+bool newMsg = false;
+Req req;
+WebSocketsClient webSocket; // declare instance of websocket
+
+void webSocketEvent(WStype_t type, uint8_t *strload, size_t length);
+
 /// Extensions ///
 // Extension Tips
 #ifdef EXTENSIONTIPS
 TaskHandle_t threadExtensionTips;
 void threadExtensionTipsCode(void *vpParameters);
-
-TaskHandle_t task1ExtensionTipsGetLnurlwCallback;
-void task1ExtensionTipsGetLnurlwCallbackCode(void *vpParameters);
-TaskHandle_t task2ExtensionTipsGetInvoice;
-void task2ExtensionTipsGetInvoiceCode(void *vpParameters);
-TaskHandle_t task3ExtensionTipsAfterReadCard;
-void task3ExtensionTipsAfterReadCardCode(void *vpParameters);
 TaskHandle_t task4ExtensionTipsSetAmount;
 void task4ExtensionTipsSetAmountCode(void *vpParameters);
 #endif
@@ -69,16 +73,24 @@ uint8_t functionThinkingLed(bool displayedTitle, uint8_t delayTime);
 void auxFunctionConfirmationLed(void);
 void auxFunctionAmountBlinkingLed(int amount);
 void auxFunctionErrorLed(void);
+uint8_t auxFunctionThinkingLed(bool displayedTitle, uint8_t delayTime);
+void startupConfiguration(void);
+String readCard(void);
+bool handleResponse(String newEventJson);
 
 /// Global variables ///
 String callbackLud06;
-uint8_t data[256];
-uint8_t bytesRead;
 String callbackLnurlw;
 String invoice;
-String invoiceStatus;
-bool invoiceWait = false;
 String amount;
+PrivateKey privateKey(ENV_SEC_HEX_32);
+PublicKey publicKey = privateKey.publicKey();
+bool confirmationPaid = false;
+String workers[30] = {""};
+String eventIdString;
+bool eventMsgSend = false;
+bool title = false;
+uint8_t delayTime = 255;
 
 void setup(void) {
 #ifdef SERIALDEBUG
@@ -129,11 +141,26 @@ void setup(void) {
     screen.sendBuffer();
     delay(350);
 
+    /// Create req ///
+    req.kinds = "20001";
+    req.authors = ENV_SERVER_PUB_HEX;
+    req.since = timeClient.getEpochTime();
+    req.until = "1739302824";
+
+    /// Init WebSocket ///
+    webSocket.beginSSL(ENV_RELAY, 443);
+    webSocket.onEvent(webSocketEvent);
+    webSocket.setReconnectInterval(1000);
+    while (!webSocket.isConnected()) {
+        Serial.print(".");
+        webSocket.loop();
+    }
+    Serial.printf("Conceted to websocket!\n");
+
 #ifdef TIMEDEBUG
     /// Init NTP ///
-    WiFiUDP ntpUDP;
-    NTPClient timeClient(ntpUDP, "pool.ntp.org");
     timeClient.begin();
+    timeClient.update();
 #endif
 
     /// Init NFC ///
@@ -166,31 +193,87 @@ void setup(void) {
 #ifdef EXTENSIONTIPS
     /// Extension Tips ///
     // threadExtensionTipsCode is a task to tips extension
-    xTaskCreatePinnedToCore(threadExtensionTipsCode, "threadExtensionTips", 10000, NULL, 0, &threadExtensionTips, 1);
+    xTaskCreatePinnedToCore(threadExtensionTipsCode, "threadExtensionTips", 10000, NULL, 0, &threadExtensionTips, 0);
 
-    // task1ExtensionTipsGetLnurlw is a task to interact with card
-    xTaskCreatePinnedToCore(task1ExtensionTipsGetLnurlwCallbackCode, "Task1ExtensionTips", 10000, NULL, 0,
-                            &task1ExtensionTipsGetLnurlwCallback, 0);
-    // task2ExtensionTipsGetInvoiceCode is a task to generate invoice
-    xTaskCreatePinnedToCore(task2ExtensionTipsGetInvoiceCode, "Task2ExtensionTips", 10000, NULL, 0,
-                            &task2ExtensionTipsGetInvoice, 0);
-    // task3ExtensionTipsThinkingLedCode is a task of thinking LED
-    xTaskCreatePinnedToCore(task3ExtensionTipsAfterReadCardCode, "Task3ExtensionTips", 10000, NULL, 0,
-                            &task3ExtensionTipsAfterReadCard, 0);
     // task4ExtensionTipsSetAmountCode is a task to adjust amount
     xTaskCreatePinnedToCore(task4ExtensionTipsSetAmountCode, "Task4ExtensionTips", 10000, NULL, 0,
                             &task4ExtensionTipsSetAmount, 0);
 #endif
+
+    startupConfiguration();
+
+    Serial.printf("Setup finished\n");
 }
 
+bool isStart = false;
+
 void loop(void) {
+#ifdef EXTENSIONTIPS
+    if (!isStart) {
+        vTaskResume(task4ExtensionTipsSetAmount);
+        vTaskResume(threadExtensionTips);
+        isStart = true;
+    }
+#endif
+
 #ifdef SERIALDEBUG
     Serial.printf("\nloop running on core %d\n", xPortGetCoreID());
 #endif
 
-    // #ifdef EXTENSIONTIPS
-    //     vTaskResume(threadExtensionTips);
-    // #endif
+    while (newMsg == false) {
+        webSocket.loop();
+    }
+
+#ifdef SERIALDEBUG
+    DynamicJsonDocument wsMsgDoc(2048);
+    DeserializationError error = deserializeJson(wsMsgDoc, wsMsg);
+    if (error) {
+        Serial.printf("Deserialization wsMsg error: %s\n", error.c_str());
+        delay(500);
+    }
+
+    Serial.printf("Message from WS:\n");
+    serializeJsonPretty(wsMsgDoc, Serial);
+#endif
+
+    NostrEvent eventRecived(wsMsg);
+    bool eventMsgRecived = eventRecived.compareId(eventIdString);
+
+    if (!eventMsgRecived && eventMsgSend) {
+        vTaskSuspend(task4ExtensionTipsSetAmount);
+        // delayTime = auxFunctionThinkingLed(title, delayTime);
+        // title = true;
+        screen.clear();
+        screen.drawStr(0, 10, "Waiting response");
+        screen.sendBuffer();
+        eventMsgSend = false;
+    }
+
+    if (wsMsgDoc[0] == "EVENT" && eventMsgRecived) {
+        if (handleResponse(wsMsg)) {
+            Serial.printf("Is a valid event\n");
+            screen.clear();
+            screen.drawStr(0, 10, "Payment confirmed");
+            screen.sendBuffer();
+            // title = false;
+            auxFunctionConfirmationLed();
+            delay(1000);
+        } else {
+            Serial.printf("Is a invalid event\n");
+            screen.clear();
+            screen.drawStr(0, 10, "Payment rejected");
+            screen.sendBuffer();
+            auxFunctionErrorLed();
+            delay(1000);
+        }
+        eventMsgRecived = false;
+#ifdef EXTENSIONTIPS
+        vTaskResume(task4ExtensionTipsSetAmount);
+        vTaskResume(threadExtensionTips);
+#endif
+    }
+
+    newMsg = false;
 
     // Check if the WiFi connection is lost
     if (WiFi.status() != WL_CONNECTED) {
@@ -215,8 +298,6 @@ void loop(void) {
         Serial.printf("\nConnected to the WiFi network\n");
 #endif
     }
-
-    delay(500);
 }
 
 /*************************************************************************************************/
@@ -245,8 +326,7 @@ uint8_t auxFunctionThinkingLed(bool displayedTitle, uint8_t delayTime) {
 }
 
 void auxFunctionConfirmationLed(void) {
-    digitalWrite(LED_GREEN, LOW);
-    delay(100);
+    digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_GREEN, HIGH);
     digitalWrite(BUZZER, HIGH);
     delay(100);
@@ -258,6 +338,7 @@ void auxFunctionConfirmationLed(void) {
     delay(100);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(BUZZER, LOW);
+    digitalWrite(LED_YELLOW, HIGH);
 }
 
 void auxFunctionAmountBlinkingLed(int amount) {
@@ -272,12 +353,84 @@ void auxFunctionAmountBlinkingLed(int amount) {
 }
 
 void auxFunctionErrorLed(void) {
-    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_RED, HIGH);
     digitalWrite(BUZZER, HIGH);
     delay(1500);
     digitalWrite(LED_RED, LOW);
     digitalWrite(BUZZER, LOW);
+    digitalWrite(LED_YELLOW, HIGH);
+}
+
+String readCard(void) {
+    uint8_t data[256];
+    uint8_t bytesRead;
+    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
+    uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+    for (;;) {
+#ifdef SERIALDEBUG
+        Serial.printf("Waiting for an ISO14443A readCard\n");
+#endif
+        uint8_t success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+
+        if (success) {
+#ifdef SERIALDEBUG
+            Serial.printf("Found an ISO14443A card\n");
+#endif
+            if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
+                bytesRead = nfcModule.ntag424_ISOReadFile(data, sizeof(data));
+
+                if (bytesRead) {
+                    auxFunctionConfirmationLed();
+                    data[bytesRead] = 0;
+
+                    return (char *)data;
+                }
+#ifdef SERIALDEBUG
+                else {
+                    auxFunctionErrorLed();
+                    Serial.printf("ERROR: Failed to read data\n");
+                }
+#endif
+            }
+#ifdef SERIALDEBUG
+            else {
+                Serial.printf("ERROR: Not a NTAG424 card\n");
+            }
+#endif
+        }
+    }
+}
+
+bool handleResponse(String newEventJson) {
+    DynamicJsonDocument eventDoc(2000);
+    DeserializationError error = deserializeJson(eventDoc, newEventJson);
+    if (error) {
+        Serial.printf("Deserialization eventJson error (handleResponse func): %s\n", error.c_str());
+        delay(500);
+    }
+    String content = eventDoc.as<JsonArray>()[2].as<JsonObject>()["content"].as<String>();
+
+    // {"success":"true","error":"invalid keys"}
+    DynamicJsonDocument contentDoc(512);
+    error = deserializeJson(contentDoc, content);
+    serializeJsonPretty(contentDoc, Serial);
+    if (error) {
+        Serial.printf("Deserialization content error: %s\n", error.c_str());
+        return false;
+    }
+
+    if (contentDoc.as<JsonObject>()["status"].as<String>() == "true") {
+        return true;
+    } else if (contentDoc.as<JsonObject>()["status"].as<String>() == "false") {
+#ifdef SERIALDEBUG
+        String erorr = contentDoc.as<JsonObject>()["error"].as<String>();
+        Serial.printf("Error: %s\n", erorr.c_str());
+#endif
+        return false;
+    } else {
+        return false;
+    }
 }
 
 /*************************************************************************************************/
@@ -287,12 +440,6 @@ void auxFunctionErrorLed(void) {
 #ifdef EXTENSIONTIPS
 /// threadExtensionTipsCode is a task to tips extension ///
 void threadExtensionTipsCode(void *vpParameters) {
-    // Obtain LUD06
-#ifdef SERIALDEBUG
-    Serial.printf("Obtaining LUD06 callback\n");
-#endif
-    callbackLud06 = getLud06Callback(ENV_LNURL);
-
 #ifdef SERIALDEBUG
     Serial.printf("threadExtensionTipsCode suspend\n");
 #endif
@@ -300,197 +447,64 @@ void threadExtensionTipsCode(void *vpParameters) {
     for (;;) {
 #ifdef SERIALDEBUG
         Serial.printf("threadExtensionTipsCode running on core %d\n", xPortGetCoreID());
-        Serial.printf("Waiting for an ISO14443A Card\n");
 #endif
         amount = "1000"; // reset amount
         vTaskResume(task4ExtensionTipsSetAmount);
 
-        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(LED_YELLOW, HIGH);
         screen.clear();
         screen.drawStr(0, 10, "Invoice amount:");
         screen.drawStr(48, 20, ((String)(amount.toInt() / 1000)).c_str());
         screen.drawStr(0, 32, "Tap card to pay");
         screen.sendBuffer();
 
-        uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
-        uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-        uint8_t success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+        String lnurlw = readCard();
+        vTaskSuspend(task4ExtensionTipsSetAmount);
+        // vTaskResume(task3ExtensionTipsAfterReadCard);
 
-        invoiceStatus = "";
-        if (success) {
-#ifdef SERIALDEBUG
-            Serial.printf("Found an ISO14443A card\n");
-#endif
-            vTaskSuspend(task4ExtensionTipsSetAmount);
+        String tags[2][2] = {{"action", "http"}, {"p", ENV_SERVER_PUB_HEX}};
 
-            if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
-                bytesRead = nfcModule.ntag424_ISOReadFile(data, sizeof(data));
-                invoiceWait = true;
+        Content content(workers, lnurlw, amount);
 
-                if (bytesRead) {
-                    vTaskResume(task3ExtensionTipsAfterReadCard);
+        NostrEvent newEvent(toHex(publicKey.point, 32), String(timeClient.getEpochTime()), "20001", tags,
+                            content.toJson());
 
-#ifdef TIMEDEBUG
-                    Serial.printf("Start time\n");
-                    unsigned long startTime = timeClient.getEpochTime();
-#endif
+        uint8_t messageHash[32];
+        sha256(newEvent.toJsonToSign(), messageHash);
+        SchnorrSignature signature = privateKey.schnorr_sign(messageHash);
+        String eventSignatureString = signature.toString();
+        eventIdString = toHex(messageHash, 32);
 
-                    vTaskResume(task1ExtensionTipsGetLnurlwCallback);
-                    vTaskResume(task2ExtensionTipsGetInvoice);
+        // verify signature
+        // if (publicKey.schnorr_verify(signature, messageHash)) {
+        //     Serial.printf("All good, signature is valid\n");
+        // } else {
+        //     Serial.printf("Something is wrong! Signature is invalid\n");
+        // }
 
-                    while (eTaskGetState(task1ExtensionTipsGetLnurlwCallback) != eSuspended ||
-                           eTaskGetState(task3ExtensionTipsAfterReadCard) !=
-                               eSuspended) { // Wait for the tasks to finish
-                        delay(10);
-                    }
+        newEvent.id = eventIdString;
+        newEvent.sig = eventSignatureString;
 
-                    DynamicJsonDocument doc = claimInvoice(callbackLnurlw, invoice); //*! TODO: return enum
-                    invoiceWait = false;
+        String eventJsonToSend = "[\"EVENT\"," + newEvent.toJson() + "]";
 
-#ifdef TIMEDEBUG
-                    unsigned long endTime = timeClient.getEpochTime();
-                    Serial.printf("\nTime elapsed: %d seconds\n", endTime - startTime);
-#endif
+        // Serial.printf("\n\nEVENT pre sign:\n%s\n\n", newEvent.toJson().c_str());
+        // Serial.printf("\n\nEVENT:\n%s\n\n", eventJsonToSend.c_str());
 
-                    ///*! TODO: AFUERA!!! ///
-                    serializeJsonPretty(doc, Serial); // Print the result after  paying the invoice (or try to)
-                    invoiceStatus = doc["status"].as<String>();
-                }
-#ifdef SERIALDEBUG
-                else {
-                    Serial.printf("ERROR: Failed to read data\n");
-                }
-#endif
-            }
-#ifdef SERIALDEBUG
-            else {
-                Serial.printf("ERROR: Not a NTAG424 card\n");
-                delay(500);
-            }
-#endif
-        }
-#ifdef SERIALDEBUG
-        else {
-            Serial.printf("ERROR: Failed to read card\n");
-            delay(500);
-        }
-#endif
-
-        //*! TODO: modify to enum
-        if (invoiceStatus == "OK") {
-            delay(250);
-            screen.clear();
-            screen.drawStr(44, 20, "Paid!");
-            screen.sendBuffer();
-            int amountSats = amount.toInt() / 1000;
-            auxFunctionAmountBlinkingLed(amountSats);
-        } else {
-            delay(250);
-            screen.clear();
-            screen.drawStr(40, 10, "ERROR!");
-            screen.drawStr(28, 20, "Try again");
-            screen.sendBuffer();
-            auxFunctionErrorLed();
-        }
-    }
-}
-
-/// task1ExtensionTipsGetLnurlw is a task to interact with card ///
-void task1ExtensionTipsGetLnurlwCallbackCode(void *vpParameters) {
-#ifdef SERIALDEBUG
-    Serial.printf("task1ExtensionTipsGetLnurlwCallbackCode suspend\n");
-#endif
-    vTaskSuspend(task1ExtensionTipsGetLnurlwCallback); // Suspend the task when it is created
-    for (;;) {
-#ifdef SERIALDEBUG
-        Serial.printf("task1ExtensionTipsGetLnurlwCallbackCode running on core %d\n", xPortGetCoreID());
-#endif
-
-#ifdef TIMEDEBUG
-        unsigned long startTime = timeClient.getEpochTime();
-#endif
-
-        /// Dump the data ///
-        data[bytesRead] = 0;
-        String lnurlw = (char *)data;
-#ifdef SERIALDEBUG
-        Serial.printf("LNURLw from card: %s\n", lnurlw.c_str());
-#endif
-
-        callbackLnurlw = getLnurlwCallback(lnurlw); // Obtain LNURLw callback
-
-#ifdef TIMEDEBUG
-        unsigned long endTime = timeClient.getEpochTime();
-        Serial.printf("\nTime elapsed in task1ExtensionTipsGetLnurlwCallbackCode: %d seconds\n", endTime - startTime);
-#endif
-
-        vTaskSuspend(task1ExtensionTipsGetLnurlwCallback);
-    }
-}
-
-/// task2ExtensionTipsGetInvoiceCode is a task to generate invoice ///
-void task2ExtensionTipsGetInvoiceCode(void *vpParameters) {
-#ifdef SERIALDEBUG
-    Serial.printf("task2ExtensionTipsGetInvoiceCode suspend\n");
-#endif
-    vTaskSuspend(task2ExtensionTipsGetInvoice); // Suspend the task when it is created
-    for (;;) {
-#ifdef SERIALDEBUG
-        Serial.printf("task2ExtensionTipsGetInvoiceCode running on core %d\n", xPortGetCoreID());
-#endif
-
-#ifdef TIMEDEBUG
-        unsigned long startTime = timeClient.getEpochTime();
-#endif
-
-#ifdef SERIALDEBUG
-        Serial.printf("Invoice amount: %s\n", amount.c_str());
-#endif
-
-        invoice = getInvoice(callbackLud06, amount); // Generate invoice
-
-#ifdef TIMEDEBUG
-        unsigned long endTime = timeClient.getEpochTime();
-        Serial.printf("\nTime elapsed in Task2: %d seconds\n", endTime - startTime);
-#endif
-
-        vTaskSuspend(task2ExtensionTipsGetInvoice);
-    }
-}
-
-/// task3ExtensionTipsAfterReadCardCode is a task to confirm and thinking led after read card ///
-void task3ExtensionTipsAfterReadCardCode(void *vpParameters) {
-#ifdef SERIALDEBUG
-    Serial.printf("task3ExtensionTipsAfterReadCardCode suspend\n");
-#endif
-    vTaskSuspend(task3ExtensionTipsAfterReadCard); // Suspend the task when it is created
-    for (;;) {
-#ifdef SERIALDEBUG
-        Serial.printf("task3ExtensionTipsAfterReadCardCode running on core %d\n", xPortGetCoreID());
-#endif
-        auxFunctionConfirmationLed();
-        screen.clear();
-        screen.drawStr(24, 20, "Read card!");
-        screen.sendBuffer();
-        delay(500);
-
-        uint8_t delayTime = 250;
-        bool displayedTitle = false;
-        while (invoiceWait || eTaskGetState(task1ExtensionTipsGetLnurlwCallback) != eSuspended ||
-               eTaskGetState(task2ExtensionTipsGetInvoice) != eSuspended) {
-            delayTime = auxFunctionThinkingLed(displayedTitle, delayTime);
-            displayedTitle = true;
-        }
-
-        vTaskSuspend(task3ExtensionTipsAfterReadCard);
+        webSocket.sendTXT(eventJsonToSend.c_str());
+        eventMsgSend = true;
+        vTaskSuspend(threadExtensionTips);
     }
 }
 
 /// task4ExtensionTipsSetAmountCode is a task to adjust amount ///
 void task4ExtensionTipsSetAmountCode(void *vpParameters) {
+#ifdef SERIALDEBUG
+    Serial.printf("task4ExtensionTipsSetAmountCode suspend\n");
+#endif
+    vTaskSuspend(task4ExtensionTipsSetAmount); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        Serial.printf("task4ExtensionTipsSetAmountCode running on core %d\n", xPortGetCoreID());
+        // Serial.printf("task4ExtensionTipsSetAmountCode running on core %d\n", xPortGetCoreID());
 #endif
         int amountToSubAdd = 100000;
         while (touchRead(TOUCH_PIN_SUB) < 40) {
@@ -520,13 +534,13 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
 #endif
             delay(350);
 
-            uint8_t count;
-            count++;
-            if (count == 3) {
-                amountToSubAdd = 1000000;
-            } else if (count == 9) {
-                amountToSubAdd = 10000000;
-            }
+            // uint8_t count = 0;
+            // count++;
+            // if (count == 3) {
+            //     amountToSubAdd = 1000000;
+            // } else if (count == 9) {
+            //     amountToSubAdd = 10000000;
+            // }
         }
         while (touchRead(TOUCH_PIN_ADD) < 40) {
             if (amount.toInt() == 1000) {
@@ -544,14 +558,114 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
 #endif
             delay(350);
 
-            uint8_t count;
-            count++;
-            if (count == 3) {
-                amountToSubAdd = 1000000;
-            } else if (count == 9) {
-                amountToSubAdd = 10000000;
-            }
+            // uint8_t count;
+            // count++;
+            // if (count == 3) {
+            //     amountToSubAdd = 1000000;
+            // } else if (count == 9) {
+            //     amountToSubAdd = 10000000;
+            // }
         }
     }
 }
 #endif // EXTENSIONTIPS
+
+/*************************************************************************************************/
+/*                                    Startup Configuration                                      */
+/*************************************************************************************************/
+
+void startupConfiguration(void) {
+    uint8_t workersCount = 0;
+    bool addOther = false;
+
+    screen.clear();
+    screen.drawStr(0, 10, "Welcome!");
+    screen.drawStr(0, 20, "Tap to add");
+    screen.drawStr(0, 30, "worker");
+    screen.sendBuffer();
+
+    do {
+        String pubkeyAndName[2]; // 0: pubkey, 1: name
+        getPubkeyFromLnurlw(readCard(), pubkeyAndName);
+        workers[workersCount++] = pubkeyAndName[0];
+#ifdef SERIALDEBUG
+        Serial.printf("Worker added: %s\n", pubkeyAndName[1].c_str());
+#endif
+        screen.clear();
+        screen.drawStr(0, 10, "Added worker:");
+        screen.drawStr(0, 20, pubkeyAndName[1].c_str());
+        screen.sendBuffer();
+        delay(1000);
+
+#ifdef SERIALDEBUG
+        Serial.printf("Do you want add other worker?\n");
+#endif
+        screen.clear();
+        screen.drawStr(0, 10, "Add worker?");
+        screen.drawStr(0, 20, "+100 confirm");
+        screen.drawStr(0, 30, "-100 reject");
+        screen.sendBuffer();
+
+        int touchAdd = 40, touchSub = 40;
+        while ((touchAdd = touchRead(TOUCH_PIN_ADD)) > 40 && (touchSub = touchRead(TOUCH_PIN_SUB)) > 40) {
+            ;
+        }
+        if (touchAdd < 40) {
+            addOther = true;
+            screen.clear();
+            screen.drawStr(0, 20, "tap card");
+            screen.sendBuffer();
+        } else if (touchSub < 40) {
+            addOther = false;
+        }
+    } while (addOther);
+
+    Serial.printf("Startup configuration finished\n");
+    Serial.printf("Workers:\n");
+    for (int i = 0; i < workersCount; i++) {
+        Serial.printf("[%d] %s", i + 1, workers[i].c_str());
+        if (i == 0) {
+            Serial.printf(" (admin)\n");
+        } else {
+            Serial.printf("\n");
+        }
+    }
+
+    return;
+}
+
+/*************************************************************************************************/
+/*                                       WebSocket                                               */
+/*************************************************************************************************/
+
+void webSocketEvent(WStype_t type, uint8_t *strload, size_t length) {
+    if (type == WStype_CONNECTED) {
+        timeClient.update();
+        req.since = timeClient.getEpochTime() - 10;
+        Serial.printf("\nsince updated\n");
+    }
+
+    switch (type) {
+    case WStype_DISCONNECTED:
+        Serial.printf("[WS] Disconnected!\n");
+        break;
+    case WStype_CONNECTED:
+        Serial.printf("\n[WS] Connected\n");
+
+        Serial.printf("Sending request: %s\n", req.toJson().c_str());
+
+        webSocket.sendTXT(req.toJson().c_str()); // send message to server when Connected
+        break;
+    case WStype_TEXT:
+        wsMsg = (char *)strload;
+        Serial.printf("\n=== Received data from socket ===\n");
+        newMsg = true;
+        break;
+    case WStype_ERROR:
+    case WStype_FRAGMENT_TEXT_START:
+    case WStype_FRAGMENT_BIN_START:
+    case WStype_FRAGMENT:
+    case WStype_FRAGMENT_FIN:
+        break;
+    }
+}
