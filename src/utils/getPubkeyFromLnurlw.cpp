@@ -23,7 +23,7 @@ void getPubkeyFromLnurlw(String lnurlw, String pubkeyAndName[]) {
 
     client.end(); // Close connection
 
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(5000);
     if (httpCode >= 200 && httpCode < 300) { // Check if the request was successful
         deserializeJson(doc, httpPayload);
     }
