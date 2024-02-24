@@ -62,8 +62,10 @@ void webSocketEvent(WStype_t type, uint8_t *strload, size_t length);
 /// Extensions ///
 // Extension Tips
 #ifdef EXTENSIONTIPS
-TaskHandle_t threadExtensionTips;
+TaskHandle_t threadExtensionTipsHandle;
 void threadExtensionTipsCode(void *vpParameters);
+TaskHandle_t task4SetAmountHandle;
+void task4SetAmountCode(void *vpParameters);
 TaskHandle_t task4ExtensionTipsSetAmount;
 void task4ExtensionTipsSetAmountCode(void *vpParameters);
 #endif
@@ -83,7 +85,7 @@ String callbackLud06;
 String callbackLnurlw;
 String invoice;
 String amount;
-PrivateKey privateKey(ENV_SEC_HEX_32);
+PrivateKey privateKey(ENV_CLIENT_SEC_HEX_32);
 PublicKey publicKey = privateKey.publicKey();
 bool confirmationPaid = false;
 String workers[30] = {""};
@@ -152,10 +154,14 @@ void setup(void) {
     webSocket.onEvent(webSocketEvent);
     webSocket.setReconnectInterval(1000);
     while (!webSocket.isConnected()) {
+#ifdef SERIALDEBUG
         Serial.print(".");
+#endif
         webSocket.loop();
     }
+#ifdef SERIALDEBUG
     Serial.printf("Conceted to websocket!\n");
+#endif
 
 #ifdef TIMEDEBUG
     /// Init NTP ///
@@ -193,7 +199,10 @@ void setup(void) {
 #ifdef EXTENSIONTIPS
     /// Extension Tips ///
     // threadExtensionTipsCode is a task to tips extension
-    xTaskCreatePinnedToCore(threadExtensionTipsCode, "threadExtensionTips", 10000, NULL, 0, &threadExtensionTips, 0);
+    xTaskCreatePinnedToCore(threadExtensionTipsCode, "Extension Tips", 10000, NULL, 0, &threadExtensionTipsHandle, 0);
+
+    // task4SetAmountCode is a task to adjust amount
+    xTaskCreatePinnedToCore(task4SetAmountCode, "Set Amount", 10000, NULL, 0, &task4SetAmountHandle, 0);
 
     // task4ExtensionTipsSetAmountCode is a task to adjust amount
     xTaskCreatePinnedToCore(task4ExtensionTipsSetAmountCode, "Task4ExtensionTips", 10000, NULL, 0,
@@ -202,31 +211,37 @@ void setup(void) {
 
     startupConfiguration();
 
+#ifdef SERIALDEBUG
     Serial.printf("Setup finished\n");
+#endif
 }
 
 bool isStart = false;
+bool eventsMatchIds = false;
 
 void loop(void) {
-#ifdef EXTENSIONTIPS
-    if (!isStart) {
-        vTaskResume(task4ExtensionTipsSetAmount);
-        vTaskResume(threadExtensionTips);
-        isStart = true;
-    }
-#endif
-
 #ifdef SERIALDEBUG
     Serial.printf("\nloop running on core %d\n", xPortGetCoreID());
+#endif
+
+#ifdef EXTENSIONTIPS
+    if (!isStart) {
+        vTaskResume(task4SetAmountHandle);
+        vTaskResume(threadExtensionTipsHandle);
+#ifdef SERIALDEBUG
+        Serial.printf("resume tasks\n");
+#endif
+        isStart = true;
+    }
 #endif
 
     while (newMsg == false) {
         webSocket.loop();
     }
 
-#ifdef SERIALDEBUG
     DynamicJsonDocument wsMsgDoc(2048);
     DeserializationError error = deserializeJson(wsMsgDoc, wsMsg);
+#ifdef SERIALDEBUG
     if (error) {
         Serial.printf("Deserialization wsMsg error: %s\n", error.c_str());
         delay(500);
@@ -237,39 +252,50 @@ void loop(void) {
 #endif
 
     NostrEvent eventRecived(wsMsg);
-    bool eventMsgRecived = eventRecived.compareId(eventIdString);
+    eventsMatchIds = eventRecived.compareId(eventIdString);
 
-    if (!eventMsgRecived && eventMsgSend) {
-        vTaskSuspend(task4ExtensionTipsSetAmount);
+    // waiting response
+    if (!eventsMatchIds && eventMsgSend) {
+        vTaskSuspend(task4SetAmountHandle);
+        vTaskSuspend(threadExtensionTipsHandle);
+        // TODO: add thinking
         // delayTime = auxFunctionThinkingLed(title, delayTime);
         // title = true;
         screen.clear();
-        screen.drawStr(0, 10, "Waiting response");
+        screen.drawStr(36, 15, "Waiting");
+        screen.drawStr(32, 25, "response");
         screen.sendBuffer();
         eventMsgSend = false;
     }
 
-    if (wsMsgDoc[0] == "EVENT" && eventMsgRecived) {
+    if (wsMsgDoc[0] == "EVENT" && eventsMatchIds) {
         if (handleResponse(wsMsg)) {
+#ifdef SERIALDEBUG
             Serial.printf("Is a valid event\n");
+#endif
             screen.clear();
-            screen.drawStr(0, 10, "Payment confirmed");
+            screen.drawStr(32, 15, "Payment");
+            screen.drawStr(24, 25, "confirmed!");
             screen.sendBuffer();
-            // title = false;
+            auxFunctionConfirmationLed(); // TODO: amount blinking
             auxFunctionConfirmationLed();
             delay(1000);
         } else {
+#ifdef SERIALDEBUG
             Serial.printf("Is a invalid event\n");
+#endif
             screen.clear();
-            screen.drawStr(0, 10, "Payment rejected");
+            screen.drawStr(32, 15, "Payment");
+            screen.drawStr(28, 25, "rejected!");
             screen.sendBuffer();
             auxFunctionErrorLed();
             delay(1000);
         }
-        eventMsgRecived = false;
+        eventIdString = "";
+        eventsMatchIds = false;
 #ifdef EXTENSIONTIPS
-        vTaskResume(task4ExtensionTipsSetAmount);
-        vTaskResume(threadExtensionTips);
+        vTaskResume(task4SetAmountHandle);
+        vTaskResume(threadExtensionTipsHandle);
 #endif
     }
 
@@ -363,26 +389,41 @@ void auxFunctionErrorLed(void) {
 }
 
 String readCard(void) {
-    uint8_t data[256];
-    uint8_t bytesRead;
-    uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
-    uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
     for (;;) {
+        uint8_t uid[] = {0, 0, 0, 0, 0, 0, 0}; // Buffer to store the returned UID
+        uint8_t uidLength;                     // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
+        uint8_t success;
+
 #ifdef SERIALDEBUG
         Serial.printf("Waiting for an ISO14443A readCard\n");
+        Serial.printf("pre read card\n");
 #endif
-        uint8_t success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+        success = nfcModule.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
+#ifdef SERIALDEBUG
+        Serial.printf("post read card\n");
+#endif
 
         if (success) {
 #ifdef SERIALDEBUG
             Serial.printf("Found an ISO14443A card\n");
 #endif
             if (uidLength == 7 && nfcModule.ntag424_isNTAG424()) { // Read data from the card if it is a NTAG424 card
+                uint8_t data[256];
+                uint8_t bytesRead;
+
                 bytesRead = nfcModule.ntag424_ISOReadFile(data, sizeof(data));
 
                 if (bytesRead) {
                     auxFunctionConfirmationLed();
-                    data[bytesRead] = 0;
+
+                    // 0-terminate the buffer
+                    if (bytesRead < sizeof(data)) {
+                        data[bytesRead] = 0;
+                    } else {
+                        data[sizeof(data) - 1] = 0;
+                    }
+
+                    // data[bytesRead] = 0;
 
                     return (char *)data;
                 }
@@ -411,25 +452,29 @@ bool handleResponse(String newEventJson) {
     }
     String content = eventDoc.as<JsonArray>()[2].as<JsonObject>()["content"].as<String>();
 
-    // {"success":"true","error":"invalid keys"}
+    // {"success":true,"error":"invalid keys"}
     DynamicJsonDocument contentDoc(512);
     error = deserializeJson(contentDoc, content);
     serializeJsonPretty(contentDoc, Serial);
     if (error) {
+#ifdef SERIALDEBUG
         Serial.printf("Deserialization content error: %s\n", error.c_str());
+#endif
         return false;
     }
 
-    if (contentDoc.as<JsonObject>()["status"].as<String>() == "true") {
-        return true;
-    } else if (contentDoc.as<JsonObject>()["status"].as<String>() == "false") {
+    bool success = contentDoc.as<JsonObject>()["success"].as<bool>();
+    if (success) {
+#ifdef SERIALDEBUG
+        Serial.printf("Success (handle response): %s\n", success ? "true" : "false");
+#endif
+        return success;
+    } else {
 #ifdef SERIALDEBUG
         String erorr = contentDoc.as<JsonObject>()["error"].as<String>();
-        Serial.printf("Error: %s\n", erorr.c_str());
+        Serial.printf("Error (handle response): %s\n", erorr.c_str());
 #endif
-        return false;
-    } else {
-        return false;
+        return success;
     }
 }
 
@@ -438,18 +483,18 @@ bool handleResponse(String newEventJson) {
 /*************************************************************************************************/
 
 #ifdef EXTENSIONTIPS
-/// threadExtensionTipsCode is a task to tips extension ///
+/// threadExtensionTipsCode create and send event ///
 void threadExtensionTipsCode(void *vpParameters) {
 #ifdef SERIALDEBUG
-    Serial.printf("threadExtensionTipsCode suspend\n");
+    Serial.printf("threadExtensionTipsCode suspend init\n");
 #endif
-    vTaskSuspend(threadExtensionTips); // Suspend the task when it is created
+    vTaskSuspend(threadExtensionTipsHandle); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
         Serial.printf("threadExtensionTipsCode running on core %d\n", xPortGetCoreID());
 #endif
         amount = "1000"; // reset amount
-        vTaskResume(task4ExtensionTipsSetAmount);
+        vTaskResume(task4SetAmountHandle);
 
         digitalWrite(LED_YELLOW, HIGH);
         screen.clear();
@@ -459,11 +504,10 @@ void threadExtensionTipsCode(void *vpParameters) {
         screen.sendBuffer();
 
         String lnurlw = readCard();
-        vTaskSuspend(task4ExtensionTipsSetAmount);
+        vTaskSuspend(task4SetAmountHandle);
         // vTaskResume(task3ExtensionTipsAfterReadCard);
 
-        String tags[2][2] = {{"action", "http"}, {"p", ENV_SERVER_PUB_HEX}};
-
+        String tags[2][2] = {{"action", "charge"}, {"p", ENV_SERVER_PUB_HEX}};
         Content content(workers, lnurlw, amount);
 
         NostrEvent newEvent(toHex(publicKey.point, 32), String(timeClient.getEpochTime()), "20001", tags,
@@ -492,19 +536,19 @@ void threadExtensionTipsCode(void *vpParameters) {
 
         webSocket.sendTXT(eventJsonToSend.c_str());
         eventMsgSend = true;
-        vTaskSuspend(threadExtensionTips);
+        vTaskSuspend(threadExtensionTipsHandle);
     }
 }
 
-/// task4ExtensionTipsSetAmountCode is a task to adjust amount ///
-void task4ExtensionTipsSetAmountCode(void *vpParameters) {
+/// task4SetAmountCode is a task to adjust amount ///
+void task4SetAmountCode(void *vpParameters) {
 #ifdef SERIALDEBUG
-    Serial.printf("task4ExtensionTipsSetAmountCode suspend\n");
+    Serial.printf("task4SetAmountCode suspend init\n");
 #endif
-    vTaskSuspend(task4ExtensionTipsSetAmount); // Suspend the task when it is created
+    vTaskSuspend(task4SetAmountHandle); // Suspend the task when it is created
     for (;;) {
 #ifdef SERIALDEBUG
-        // Serial.printf("task4ExtensionTipsSetAmountCode running on core %d\n", xPortGetCoreID());
+        // Serial.printf("task4SetAmountCode running on core %d\n", xPortGetCoreID());
 #endif
         int amountToSubAdd = 100000;
         while (touchRead(TOUCH_PIN_SUB) < 40) {
@@ -532,7 +576,7 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
 #ifdef SERIALDEBUG
             Serial.printf("Amount: %d SATS\n", amountInt);
 #endif
-            delay(350);
+            delay(150);
 
             // uint8_t count = 0;
             // count++;
@@ -556,7 +600,7 @@ void task4ExtensionTipsSetAmountCode(void *vpParameters) {
 #ifdef SERIALDEBUG
             Serial.printf("Amount: %d SATS\n", amountInt);
 #endif
-            delay(350);
+            delay(150);
 
             // uint8_t count;
             // count++;
@@ -578,32 +622,54 @@ void startupConfiguration(void) {
     uint8_t workersCount = 0;
     bool addOther = false;
 
-    screen.clear();
-    screen.drawStr(0, 10, "Welcome!");
-    screen.drawStr(0, 20, "Tap to add");
-    screen.drawStr(0, 30, "worker");
-    screen.sendBuffer();
-
     do {
-        String pubkeyAndName[2]; // 0: pubkey, 1: name
-        getPubkeyFromLnurlw(readCard(), pubkeyAndName);
-        workers[workersCount++] = pubkeyAndName[0];
-#ifdef SERIALDEBUG
-        Serial.printf("Worker added: %s\n", pubkeyAndName[1].c_str());
-#endif
+        // welcome
         screen.clear();
-        screen.drawStr(0, 10, "Added worker:");
-        screen.drawStr(0, 20, pubkeyAndName[1].c_str());
+        screen.drawStr(0, 10, "Tap card");
+        screen.drawStr(0, 20, "to add worker");
         screen.sendBuffer();
-        delay(1000);
+
+        // add worker
+        String pubkeyAndName[2]; // 0: pubkey, 1: name
+        String cardData = readCard();
+        screen.clear();
+        isThinkingActive = true;
+        vTaskResume(task5ThinkingLedHandle);
+        // screen.drawStr(0, 20, "Thinking..."); // TODO: async with auxFunctionThinkingLed
+        screen.sendBuffer();
+        getPubkeyFromLnurlw(cardData, pubkeyAndName); // TODO: async
+        isThinkingActive = false;
+        if (pubkeyAndName[0] != "null") {
+            workers[workersCount++] = pubkeyAndName[0];
+#ifdef SERIALDEBUG
+            Serial.printf("Worker added: %s\n", pubkeyAndName[1].c_str());
+#endif
+            screen.clear();
+            screen.drawStr(0, 10, "Worker added:");
+            screen.drawStr(0, 20, pubkeyAndName[1].c_str());
+            screen.sendBuffer();
+            delay(1000);
+        }
+#ifdef SERIALDEBUG
+        else {
+#ifdef SERIALDEBUG
+            Serial.printf("Error: pubkey is null\n");
+#endif
+            screen.clear();
+            screen.drawStr(0, 10, "Worker not added:");
+            screen.drawStr(0, 20, "pubkey is null");
+            screen.sendBuffer();
+            delay(1000);
+        }
+#endif
 
 #ifdef SERIALDEBUG
         Serial.printf("Do you want add other worker?\n");
 #endif
         screen.clear();
-        screen.drawStr(0, 10, "Add worker?");
-        screen.drawStr(0, 20, "+100 confirm");
-        screen.drawStr(0, 30, "-100 reject");
+        screen.drawStr(0, 10, "Add another?");
+        screen.drawStr(0, 20, "+100 to confirm");
+        screen.drawStr(0, 30, "-100 to reject");
         screen.sendBuffer();
 
         int touchAdd = 40, touchSub = 40;
@@ -613,13 +679,14 @@ void startupConfiguration(void) {
         if (touchAdd < 40) {
             addOther = true;
             screen.clear();
-            screen.drawStr(0, 20, "tap card");
+            screen.drawStr(0, 20, "Tap card");
             screen.sendBuffer();
         } else if (touchSub < 40) {
             addOther = false;
         }
     } while (addOther);
 
+#ifdef SERIALDEBUG
     Serial.printf("Startup configuration finished\n");
     Serial.printf("Workers:\n");
     for (int i = 0; i < workersCount; i++) {
@@ -630,6 +697,13 @@ void startupConfiguration(void) {
             Serial.printf("\n");
         }
     }
+#endif
+
+    screen.clear();
+    screen.drawStr(0, 10, "Configuration");
+    screen.drawStr(0, 20, "finished");
+    screen.sendBuffer();
+    delay(1000);
 
     return;
 }
@@ -642,23 +716,31 @@ void webSocketEvent(WStype_t type, uint8_t *strload, size_t length) {
     if (type == WStype_CONNECTED) {
         timeClient.update();
         req.since = timeClient.getEpochTime() - 10;
+#ifdef SERIALDEBUG
         Serial.printf("\nsince updated\n");
+#endif
     }
 
     switch (type) {
     case WStype_DISCONNECTED:
+#ifdef SERIALDEBUG
         Serial.printf("[WS] Disconnected!\n");
+#endif
         break;
     case WStype_CONNECTED:
+#ifdef SERIALDEBUG
         Serial.printf("\n[WS] Connected\n");
 
         Serial.printf("Sending request: %s\n", req.toJson().c_str());
+#endif
 
         webSocket.sendTXT(req.toJson().c_str()); // send message to server when Connected
         break;
     case WStype_TEXT:
         wsMsg = (char *)strload;
+#ifdef SERIALDEBUG
         Serial.printf("\n=== Received data from socket ===\n");
+#endif
         newMsg = true;
         break;
     case WStype_ERROR:
