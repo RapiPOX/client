@@ -66,8 +66,8 @@ TaskHandle_t threadExtensionTipsHandle;
 void threadExtensionTipsCode(void *vpParameters);
 TaskHandle_t task4SetAmountHandle;
 void task4SetAmountCode(void *vpParameters);
-TaskHandle_t task4ExtensionTipsSetAmount;
-void task4ExtensionTipsSetAmountCode(void *vpParameters);
+TaskHandle_t task5ThinkingLedHandle;
+void task5ThinkingLedCode(void *vpParameters);
 #endif
 
 /// Auxiliar functions ///
@@ -76,6 +76,7 @@ void auxFunctionConfirmationLed(void);
 void auxFunctionAmountBlinkingLed(int amount);
 void auxFunctionErrorLed(void);
 uint8_t auxFunctionThinkingLed(bool displayedTitle, uint8_t delayTime);
+bool isThinkingActive = false;
 void startupConfiguration(void);
 String readCard(void);
 bool handleResponse(String newEventJson);
@@ -110,7 +111,7 @@ void setup(void) {
     screen.begin();
     screen.setFont(u8g2_font_amstrad_cpc_extended_8f);
     screen.setContrast(40);
-    screen.drawStr(0, 20, "Hello world!");
+    screen.drawStr(16, 20, "Hello world!");
     screen.sendBuffer();
     delay(750);
 
@@ -204,9 +205,8 @@ void setup(void) {
     // task4SetAmountCode is a task to adjust amount
     xTaskCreatePinnedToCore(task4SetAmountCode, "Set Amount", 10000, NULL, 0, &task4SetAmountHandle, 0);
 
-    // task4ExtensionTipsSetAmountCode is a task to adjust amount
-    xTaskCreatePinnedToCore(task4ExtensionTipsSetAmountCode, "Task4ExtensionTips", 10000, NULL, 0,
-                            &task4ExtensionTipsSetAmount, 0);
+    // thinking led
+    xTaskCreatePinnedToCore(task5ThinkingLedCode, "Thinking led", 10000, NULL, 0, &task5ThinkingLedHandle, 0);
 #endif
 
     startupConfiguration();
@@ -258,17 +258,13 @@ void loop(void) {
     if (!eventsMatchIds && eventMsgSend) {
         vTaskSuspend(task4SetAmountHandle);
         vTaskSuspend(threadExtensionTipsHandle);
-        // TODO: add thinking
-        // delayTime = auxFunctionThinkingLed(title, delayTime);
-        // title = true;
-        screen.clear();
-        screen.drawStr(36, 15, "Waiting");
-        screen.drawStr(32, 25, "response");
-        screen.sendBuffer();
+        isThinkingActive = true;
+        vTaskResume(task5ThinkingLedHandle);
         eventMsgSend = false;
     }
 
     if (wsMsgDoc[0] == "EVENT" && eventsMatchIds) {
+        isThinkingActive = false;
         if (handleResponse(wsMsg)) {
 #ifdef SERIALDEBUG
             Serial.printf("Is a valid event\n");
@@ -279,7 +275,7 @@ void loop(void) {
             screen.sendBuffer();
             auxFunctionConfirmationLed(); // TODO: amount blinking
             auxFunctionConfirmationLed();
-            delay(1000);
+            delay(850);
         } else {
 #ifdef SERIALDEBUG
             Serial.printf("Is a invalid event\n");
@@ -349,6 +345,27 @@ uint8_t auxFunctionThinkingLed(bool displayedTitle, uint8_t delayTime) {
     delay(delayTime);
 
     return delayTime > 50 ? delayTime - 10 : 50;
+}
+
+void task5ThinkingLedCode(void *vpParameters) {
+#ifdef SERIALDEBUG
+    Serial.printf("task5ThinkingLedCode suspend init\n");
+#endif
+    vTaskSuspend(task5ThinkingLedHandle); // Suspend the task when it is created
+    for (;;) {
+#ifdef SERIALDEBUG
+        Serial.printf("task5ThinkingLedCode running on core %d\n", xPortGetCoreID());
+#endif
+        uint8_t time = 255;
+
+        while (isThinkingActive) {
+            time = auxFunctionThinkingLed(title, time);
+            title = true;
+        }
+
+        title = false;
+        vTaskSuspend(task5ThinkingLedHandle);
+    }
 }
 
 void auxFunctionConfirmationLed(void) {
@@ -498,9 +515,9 @@ void threadExtensionTipsCode(void *vpParameters) {
 
         digitalWrite(LED_YELLOW, HIGH);
         screen.clear();
-        screen.drawStr(0, 10, "Invoice amount:");
+        screen.drawStr(4, 10, "Invoice amount:");
         screen.drawStr(48, 20, ((String)(amount.toInt() / 1000)).c_str());
-        screen.drawStr(0, 32, "Tap card to pay");
+        screen.drawStr(4, 32, "Tap card to pay");
         screen.sendBuffer();
 
         String lnurlw = readCard();
@@ -568,9 +585,9 @@ void task4SetAmountCode(void *vpParameters) {
                     amount = amount.toInt() == 21000 ? amount.toInt() - 20000 : amount.toInt() - amountToSubAdd;
                 }
             }
-            screen.drawStr(0, 10, "Invoice amount:");
+            screen.drawStr(4, 10, "Invoice amount:");
             screen.drawStr(48, 20, (((String)(amount.toInt() / 1000)) + "  ").c_str());
-            screen.drawStr(0, 32, "Tap card to pay");
+            screen.drawStr(4, 32, "Tap card to pay");
             screen.sendBuffer();
             int amountInt = amount.toInt() / 1000;
 #ifdef SERIALDEBUG
@@ -592,9 +609,9 @@ void task4SetAmountCode(void *vpParameters) {
             } else {
                 amount = amount.toInt() == 21000 ? amount.toInt() + 79000 : amount.toInt() + amountToSubAdd;
             }
-            screen.drawStr(0, 10, "Invoice amount:");
+            screen.drawStr(4, 10, "Invoice amount:");
             screen.drawStr(48, 20, (((String)(amount.toInt() / 1000)) + "  ").c_str());
-            screen.drawStr(0, 32, "Tap card to pay");
+            screen.drawStr(4, 32, "Tap card to pay");
             screen.sendBuffer();
             int amountInt = amount.toInt() / 1000;
 #ifdef SERIALDEBUG
@@ -625,14 +642,16 @@ void startupConfiguration(void) {
     do {
         // welcome
         screen.clear();
-        screen.drawStr(0, 10, "Tap card");
-        screen.drawStr(0, 20, "to add worker");
+        screen.drawStr(32, 15, "Tap card");
+        screen.drawStr(12, 25, "to add worker");
         screen.sendBuffer();
+        digitalWrite(LED_YELLOW, HIGH);
 
         // add worker
         String pubkeyAndName[2]; // 0: pubkey, 1: name
         String cardData = readCard();
         screen.clear();
+        digitalWrite(LED_YELLOW, LOW);
         isThinkingActive = true;
         vTaskResume(task5ThinkingLedHandle);
         // screen.drawStr(0, 20, "Thinking..."); // TODO: async with auxFunctionThinkingLed
@@ -645,8 +664,9 @@ void startupConfiguration(void) {
             Serial.printf("Worker added: %s\n", pubkeyAndName[1].c_str());
 #endif
             screen.clear();
-            screen.drawStr(0, 10, "Worker added:");
-            screen.drawStr(0, 20, pubkeyAndName[1].c_str());
+            screen.drawStr(12, 15, "Worker added:");
+            uint8_t x = (128 - pubkeyAndName[1].length() * 8) / 2;
+            screen.drawStr(x, 25, pubkeyAndName[1].c_str());
             screen.sendBuffer();
             delay(1000);
         }
@@ -656,8 +676,8 @@ void startupConfiguration(void) {
             Serial.printf("Error: pubkey is null\n");
 #endif
             screen.clear();
-            screen.drawStr(0, 10, "Worker not added:");
-            screen.drawStr(0, 20, "pubkey is null");
+            screen.drawStr(4, 15, "Worker not add:");
+            screen.drawStr(8, 25, "invalid pubkey");
             screen.sendBuffer();
             delay(1000);
         }
@@ -666,10 +686,11 @@ void startupConfiguration(void) {
 #ifdef SERIALDEBUG
         Serial.printf("Do you want add other worker?\n");
 #endif
+        digitalWrite(LED_YELLOW, HIGH);
         screen.clear();
-        screen.drawStr(0, 10, "Add another?");
-        screen.drawStr(0, 20, "+100 to confirm");
-        screen.drawStr(0, 30, "-100 to reject");
+        screen.drawStr(16, 10, "Add another?");
+        screen.drawStr(4, 20, "+100 to confirm");
+        screen.drawStr(8, 30, "-100 to reject");
         screen.sendBuffer();
 
         int touchAdd = 40, touchSub = 40;
@@ -679,11 +700,12 @@ void startupConfiguration(void) {
         if (touchAdd < 40) {
             addOther = true;
             screen.clear();
-            screen.drawStr(0, 20, "Tap card");
+            screen.drawStr(32, 20, "Tap card");
             screen.sendBuffer();
         } else if (touchSub < 40) {
             addOther = false;
         }
+        digitalWrite(LED_YELLOW, LOW);
     } while (addOther);
 
 #ifdef SERIALDEBUG
@@ -700,8 +722,8 @@ void startupConfiguration(void) {
 #endif
 
     screen.clear();
-    screen.drawStr(0, 10, "Configuration");
-    screen.drawStr(0, 20, "finished");
+    screen.drawStr(12, 15, "Configuration");
+    screen.drawStr(32, 25, "finished");
     screen.sendBuffer();
     delay(1000);
 
